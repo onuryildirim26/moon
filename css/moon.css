@@ -1,0 +1,1693 @@
+/* Moon — the single stylesheet.
+ *
+ * The visual system has one law: structure is born from 1px lines and empty
+ * space, never from boxes. There is no box-shadow, no gradient and no lifted
+ * card anywhere in this file; a radius is 0, or 2px on an input or a button.
+ * A "plate" surface appears in exactly two places (the hero strip and the
+ * focused ledger row) to say "this face caught the light", not "this is a card".
+ *
+ * Amber (--dial) is a data ink: scale fills, the active rail item, the primary
+ * button. It never tints body text and never fills a background.
+ * Every colour here comes from css/tokens.css — no raw hex is written below
+ * (the print block swaps in named colours, which the ink of paper demands).
+ * Section rhythm is governed from ONE rule (.view > * + *); nothing else hands
+ * out vertical margin, so no two rules ever cancel each other out.
+ */
+
+/* ------------------------------------------------------------------ tokens
+   Additions only. Nothing defined in tokens.css is redefined here, except
+   --gutter and --amount-col at the phone breakpoint, which tokens.css marks
+   as belonging to this file. */
+:root {
+  --t-rail: 0.9375rem;      /* 15px — rail items read as text, not as tabs    */
+  --rail-h: 56px;           /* phone bottom rail                              */
+  --day-col: 72px;          /* ledger date gutter: the day head hangs in it    */
+  --cat-col: 12ch;          /* category column, truncates with an ellipsis     */
+  --act-col: 84px;          /* row actions: space is reserved even when unseen */
+  --meter-name: 136px;
+  --meter-read: 176px;
+  --scrim: rgb(0 0 0 / 0.55);   /* dialog backdrop — the only translucency    */
+  --stagger: 60ms;          /* dark-adaptation step delay                     */
+}
+
+/* ------------------------------------------------------------------- reset
+   Targeted, not universal: only the elements whose defaults fight the system.
+   The one universal rule is box-sizing, inherited from html — every border and
+   padding in this file is measured from the outside edge, and a node created
+   later by a view must inherit that or its 1px border would push the grid. */
+html {
+  box-sizing: border-box;
+  -webkit-text-size-adjust: 100%;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: inherit;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-ui);
+  font-size: var(--t-body);
+  line-height: var(--lh-body);
+}
+
+h1,
+h2,
+h3,
+p,
+figure,
+blockquote,
+dl,
+dd,
+fieldset {
+  margin: 0;
+}
+
+ul,
+ol {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+fieldset {
+  border: 0;
+  padding: 0;
+  min-width: 0;
+}
+
+img,
+svg,
+canvas {
+  max-width: 100%;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+table {
+  border-collapse: collapse;
+}
+
+/* JS hides things with [hidden]; it must beat the display rules below. */
+[hidden] {
+  display: none !important;
+}
+
+/* ------------------------------------------------------------------- focus
+   The ring is never removed. It is the one place a 2px amber line is allowed
+   to sit on top of the layout instead of inside it. */
+:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.view:focus-visible,
+.ledger-row:focus-visible,
+.dialog:focus-visible {
+  outline-offset: -2px;
+}
+
+/* -------------------------------------------------------------- utilities */
+.sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+.skip {
+  position: fixed;
+  z-index: 60;
+  top: 0;
+  left: 0;
+  padding: var(--s1) var(--s2);
+  background: var(--plate);
+  color: var(--ink);
+  border: 1px solid var(--rule);
+  border-radius: 0;
+  font-size: var(--t-sm);
+  transform: translateY(-140%);
+  transition: transform var(--dur-fast) var(--ease);
+}
+
+.skip:focus {
+  transform: translateY(0);
+}
+
+/* Every digit in the app scans as a column. */
+.num,
+.money,
+.hero__value,
+.hero__aside,
+.day__total,
+.meter__pct,
+.meter__drift,
+.period,
+.table,
+.chart__read,
+.undo__count,
+.storage__read,
+input[inputmode="decimal"],
+input[type="number"],
+input[type="date"] {
+  font-variant-numeric: tabular-nums lining-nums;
+}
+
+.prose {
+  font-family: var(--font-prose);
+  font-size: var(--t-prose);
+  line-height: var(--lh-prose);
+}
+
+.dim {
+  color: var(--ink-dim);
+}
+
+/* ------------------------------------------------------------ typography */
+.brand {
+  display: flex;
+  align-items: center;
+  gap: var(--s1);
+  font-size: var(--t-rail);
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  line-height: 1;
+}
+
+.brand__disc {
+  color: var(--ink-dim);
+  flex: none;
+}
+
+.section__title {
+  font-size: var(--t-h2);
+  font-weight: 600;
+  line-height: var(--lh-tight);
+  letter-spacing: 0;
+}
+
+h2 {
+  font-size: var(--t-h2);
+  font-weight: 600;
+  line-height: var(--lh-tight);
+}
+
+h3 {
+  font-size: var(--t-body);
+  font-weight: 500;
+  line-height: var(--lh-tight);
+}
+
+.mid {
+  font-size: var(--t-mid);
+  font-weight: 400;
+  line-height: var(--lh-tight);
+}
+
+.sm {
+  font-size: var(--t-sm);
+  line-height: 1.45;
+}
+
+.tick {
+  font-size: var(--t-tick);
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  color: var(--ink-dim);
+}
+
+/* ------------------------------------------------------------------ shell */
+.top {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s2);
+  max-width: var(--max);
+  margin: 0 auto;
+  padding: var(--s2) var(--gutter);
+  border-bottom: 1px solid var(--rule);
+}
+
+.top__controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s2);
+  font-size: var(--t-sm);
+}
+
+.shell {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--s3);
+  max-width: var(--max);
+  margin: 0 auto;
+  padding: var(--s3) var(--gutter) var(--s5);
+}
+
+.view {
+  min-width: 0;
+}
+
+/* The one rule that hands out vertical rhythm between sections. */
+.view > * + * {
+  margin-top: var(--s5);
+}
+
+/* --------------------------------------------------------------- the rail
+   A list of words. No pill, no tab, no icon, no background fill. The active
+   item is a 2px amber rule and full-brightness ink; the 2px is always
+   reserved so nothing shifts when the route changes. */
+.rail {
+  display: flex;
+  font-size: var(--t-rail);
+}
+
+.rail__item {
+  display: flex;
+  align-items: center;
+  color: var(--ink-dim);
+  border-left: 2px solid transparent;
+  border-bottom: 2px solid transparent;
+  padding: 6px var(--s1);
+  min-height: 32px;
+  transition: opacity var(--dur-fast) var(--ease);
+}
+
+.rail__item:hover {
+  color: var(--ink);
+}
+
+.rail__item.is-active,
+.rail__item[aria-current="page"] {
+  color: var(--ink);
+  background: none;
+}
+
+.rail__more {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: 0;
+  border-left: 2px solid transparent;
+  color: var(--ink-dim);
+  font-size: var(--t-rail);
+  cursor: pointer;
+}
+
+/* ---------------------------------------------------------------- section
+   Title, then a 1px rule running to the right edge, then the aside. The rule
+   is a pseudo-element so a section with no aside needs no filler markup. */
+.section__head {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  min-height: 24px;
+}
+
+.section__head::after {
+  content: "";
+  order: 1;
+  flex: 1 1 auto;
+  height: 1px;
+  background: var(--rule);
+  transform-origin: left center;
+}
+
+.section__title {
+  order: 0;
+  flex: none;
+}
+
+.section__aside {
+  order: 2;
+  flex: none;
+  font-size: var(--t-sm);
+  color: var(--ink-dim);
+}
+
+.section__body {
+  margin-top: var(--s2);
+}
+
+/* ------------------------------------------------------------------- hero
+   A strip, not a card: plate surface, a 1px rule above and below, radius 0,
+   no shadow. The whole strip is the CSV drop target (G11), so the dashed
+   border arrives as an inset outline — it cannot move a single pixel. */
+.hero {
+  position: relative;
+  background: var(--plate);
+  border-top: 1px solid var(--rule);
+  border-bottom: 1px solid var(--rule);
+  border-radius: 0;
+  padding: var(--s3) var(--s2);
+}
+
+.hero > * + * {
+  margin-top: var(--s1);
+}
+
+.hero__label {
+  font-size: var(--t-sm);
+  color: var(--ink-dim);
+}
+
+.hero__value {
+  font-size: var(--t-hero);
+  font-weight: 300;
+  line-height: 1;
+  letter-spacing: -0.01em;
+}
+
+.hero__aside {
+  position: absolute;
+  top: var(--s3);
+  right: var(--s2);
+  display: flex;
+  align-items: center;
+  gap: var(--s1);
+  font-size: var(--t-sm);
+  color: var(--ink-dim);
+}
+
+.hero__trail {
+  margin-top: var(--s2);
+}
+
+.hero__line {
+  font-size: var(--t-sm);
+  line-height: 1.45;
+  color: var(--ink);
+}
+
+.hero__line.is-dim {
+  color: var(--ink-dim);
+}
+
+.disc {
+  display: block;
+  width: 28px;
+  height: 28px;
+  flex: none;
+  color: var(--ink-dim);
+}
+
+.disc.is-small {
+  width: 10px;
+  height: 10px;
+}
+
+/* ------------------------------------------------------------------ meter
+   48px row: name left, scale in the middle, reading right. */
+.meter {
+  display: grid;
+  grid-template-columns: var(--meter-name) minmax(0, 1fr) var(--meter-read);
+  align-items: center;
+  column-gap: var(--s2);
+  min-height: 48px;
+}
+
+.meter + .meter {
+  border-top: 1px solid var(--rule);
+}
+
+.meter__name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--t-sm);
+  color: var(--ink);
+}
+
+.meter__name.is-fixed {
+  color: var(--ink-dim);
+}
+
+.meter__scale {
+  min-width: 0;
+  /* The over-limit part must be free to leave its column. */
+  overflow: visible;
+}
+
+.meter__readout {
+  text-align: right;
+  font-size: var(--t-sm);
+  line-height: 1.35;
+}
+
+.meter__pct {
+  display: block;
+  font-size: var(--t-body);
+}
+
+.meter__drift {
+  display: block;
+  color: var(--ink-dim);
+}
+
+/* Over limit (G1): the right alignment of nine categories breaks on purpose.
+   The eye catches one spoiled column before it reads a single number. */
+.meter.is-over .meter__scale {
+  overflow: visible;
+}
+
+.meter.is-over .meter__readout {
+  overflow: visible;
+  text-align: left;
+  justify-self: start;
+  white-space: nowrap;
+  color: var(--over);
+}
+
+.meter.is-over .meter__drift {
+  color: var(--over);
+}
+
+.meter.is-over.is-flare .meter__readout,
+.meter.is-over.is-flare .meter__drift {
+  color: var(--flare);
+}
+
+/* ----------------------------------------------------------------- ledger
+   No line between rows. A 1px rule between day groups only: ~25 lines instead
+   of 200. The day head hangs into the left margin like a lab-book note. */
+.ledger {
+  margin-top: var(--s2);
+}
+
+.day {
+  padding-left: var(--day-col);
+  padding-bottom: var(--s1);
+  content-visibility: auto;
+  contain-intrinsic-size: 0 220px;
+}
+
+.day + .day {
+  border-top: 1px solid var(--rule);
+  padding-top: var(--s1);
+}
+
+.day__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--s2);
+  margin-left: calc(var(--day-col) * -1);
+  padding-right: 0;
+  font-size: var(--t-sm);
+  color: var(--ink-dim);
+}
+
+.day__label {
+  flex: none;
+}
+
+.day__total {
+  color: var(--ink-dim);
+}
+
+.ledger-row {
+  display: grid;
+  grid-template-columns:
+    minmax(0, var(--cat-col))
+    minmax(0, 1fr)
+    var(--act-col)
+    var(--amount-col)
+    var(--note-col);
+  align-items: center;
+  column-gap: var(--s2);
+  min-height: var(--row-h);
+  /* Both reserved so neither the guide line nor the focus rule can shift a row. */
+  border-bottom: 1px solid transparent;
+  border-left: 2px solid transparent;
+  padding-left: var(--s1);
+  margin-left: calc(var(--s1) * -1 - 2px);
+}
+
+.ledger.is-dense .ledger-row {
+  min-height: var(--row-h-dense);
+}
+
+.ledger-row:hover {
+  background: var(--plate);
+}
+
+.ledger-row.is-active,
+.ledger-row:focus-within {
+  background: var(--plate);
+  border-left-color: var(--dial);
+}
+
+/* G5: in a heavy day, or in any filtered view, a guide line every fifth row. */
+.ledger-row.is-guide {
+  border-bottom-color: var(--rule);
+}
+
+.ledger-row__date {
+  display: none;
+  font-size: var(--t-sm);
+  color: var(--ink-dim);
+}
+
+.ledger-row__cat {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--t-sm);
+  font-stretch: 92%;
+  color: var(--ink-dim);
+}
+
+.ledger-row__note {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--t-amount);
+}
+
+.ledger-row.is-unconfirmed .ledger-row__note {
+  color: var(--ink-dim);
+}
+
+/* Actions keep their space at all times; only opacity moves. */
+.ledger-row__actions {
+  display: flex;
+  gap: 2px;
+  justify-content: flex-end;
+  opacity: 0;
+  transition: opacity var(--dur-fast) var(--ease);
+}
+
+.ledger-row:hover .ledger-row__actions,
+.ledger-row:focus-within .ledger-row__actions,
+.ledger-row.is-active .ledger-row__actions {
+  opacity: 1;
+}
+
+.ledger-row__amount {
+  justify-self: end;
+}
+
+.ledger-row__mark {
+  text-align: center;
+  font-size: var(--t-sm);
+  color: var(--ink-dim);
+}
+
+/* A12: below the threshold the day grouping collapses and the date returns
+   to the row itself. */
+.ledger.is-flat .day {
+  padding-left: 0;
+  border-top: 0;
+}
+
+.ledger.is-flat .day__head {
+  display: none;
+}
+
+.ledger.is-flat .ledger-row {
+  grid-template-columns:
+    minmax(0, 72px)
+    minmax(0, var(--cat-col))
+    minmax(0, 1fr)
+    var(--amount-col)
+    var(--note-col);
+}
+
+.ledger.is-flat .ledger-row__date {
+  display: block;
+}
+
+.ledger.is-flat .ledger-row__actions {
+  display: none;
+}
+
+.ledger__summary {
+  font-size: var(--t-sm);
+  color: var(--ink-dim);
+}
+
+.filters {
+  position: sticky;
+  z-index: 3;
+  top: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s1);
+  padding: var(--s1) 0;
+  background: var(--bg);
+  border-bottom: 1px solid var(--rule);
+}
+
+/* Controls in the filter bar size to their content, not to the bar. */
+.filters input,
+.filters select {
+  width: auto;
+  min-width: 0;
+  max-width: 220px;
+}
+
+/* ------------------------------------------------------------ money cell
+   Three measured columns — whole (right aligned) / separator (fixed 6px) /
+   cents — plus a lead and a trail slot for the sign and the symbol. The cents
+   stay the SAME SIZE and only lose ink, so the decimal separator lands on the
+   same pixel in every row (G4). */
+.money {
+  display: inline-grid;
+  grid-template-columns: auto auto minmax(0, 1fr) 6px auto auto;
+  align-items: baseline;
+  min-width: var(--amount-col);
+  font-size: var(--t-amount);
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.m-sign {
+  grid-column: 1;
+  text-align: right;
+}
+
+.m-whole {
+  grid-column: 3;
+  text-align: right;
+}
+
+.m-sep {
+  grid-column: 4;
+  text-align: center;
+}
+
+.m-cents {
+  grid-column: 5;
+  color: var(--ink-dim);
+}
+
+.m-sym {
+  grid-column: 6;
+  padding-left: 0.25em;
+  color: var(--ink-dim);
+}
+
+/* EN layout puts the symbol in front of the digits. */
+.money.is-sym-first .m-sym {
+  grid-column: 2;
+  padding-left: 0;
+  padding-right: 0.15em;
+}
+
+.money.is-out {
+  color: var(--dial);
+}
+
+.money.is-in {
+  color: var(--gauge);
+}
+
+.money.is-dim {
+  color: var(--ink-dim);
+}
+
+.money.is-mid {
+  font-size: var(--t-mid);
+  font-weight: 400;
+}
+
+/* --------------------------------------------------- margin marks († ○ ↧) */
+.mark {
+  display: inline-block;
+  width: var(--note-col);
+  text-align: center;
+  font-size: var(--t-sm);
+  line-height: 1;
+  color: var(--ink-dim);
+}
+
+.mark.is-over {
+  color: var(--over);
+}
+
+.mark.is-unconfirmed {
+  color: var(--dial);
+}
+
+/* ----------------------------------------------------------------- charts
+   The reading line lives above the chart; there is no floating tooltip. */
+.chart {
+  margin-top: var(--s2);
+}
+
+.chart__read {
+  min-height: 1.45em;
+  font-size: var(--t-sm);
+  color: var(--ink-dim);
+}
+
+.chart svg,
+.hero__trail svg,
+.meter__scale svg,
+.yeargrid svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  overflow: visible;
+}
+
+.disc svg {
+  width: 100%;
+  height: 100%;
+}
+
+.chart__point:focus-visible {
+  outline-offset: 1px;
+}
+
+.yeargrid {
+  margin-top: var(--s2);
+}
+
+/* "Show the numbers": the accessible and printable twin of every chart. */
+.numbers {
+  margin-top: var(--s1);
+  border-top: 1px solid var(--rule);
+}
+
+.numbers > summary {
+  padding: var(--s1) 0;
+  font-size: var(--t-sm);
+  color: var(--ink-dim);
+  cursor: pointer;
+  list-style: none;
+}
+
+.numbers > summary::-webkit-details-marker {
+  display: none;
+}
+
+.table {
+  width: 100%;
+  font-size: var(--t-sm);
+}
+
+.table th,
+.table td {
+  padding: 6px var(--s1) 6px 0;
+  text-align: left;
+  border-bottom: 1px solid var(--rule);
+  vertical-align: baseline;
+}
+
+.table th {
+  font-weight: 500;
+  color: var(--ink-dim);
+}
+
+.table .is-num {
+  text-align: right;
+  font-variant-numeric: tabular-nums lining-nums;
+}
+
+/* ------------------------------------------------------- forms & controls */
+.form {
+  display: grid;
+  gap: var(--s2);
+  max-width: 520px;
+  margin-top: var(--s2);
+}
+
+.form__row {
+  display: grid;
+  gap: var(--s2);
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+}
+
+.form__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s1);
+  align-items: center;
+}
+
+.form__summary {
+  border-left: 2px solid var(--over);
+  padding-left: var(--s2);
+  font-size: var(--t-sm);
+}
+
+.field {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.field__label {
+  font-size: var(--t-sm);
+  color: var(--ink-dim);
+}
+
+.field__hint,
+.field__preview {
+  font-size: var(--t-sm);
+  color: var(--ink-dim);
+}
+
+.field__error {
+  font-size: var(--t-sm);
+  color: var(--over);
+}
+
+input[type="text"],
+input[type="search"],
+input[type="number"],
+input[type="date"],
+input[type="month"],
+select,
+textarea {
+  width: 100%;
+  min-height: 36px;
+  padding: 6px 8px;
+  background: var(--bg);
+  color: var(--ink);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  font-size: var(--t-body);
+}
+
+textarea {
+  line-height: var(--lh-body);
+  resize: vertical;
+}
+
+input:hover,
+select:hover,
+textarea:hover {
+  border-color: var(--rule-strong);
+}
+
+[aria-invalid="true"] {
+  border-color: var(--over);
+}
+
+input[type="checkbox"],
+input[type="radio"] {
+  accent-color: var(--dial);
+  width: 18px;
+  height: 18px;
+}
+
+.switch {
+  display: flex;
+  align-items: center;
+  gap: var(--s1);
+  min-height: 36px;
+  font-size: var(--t-sm);
+}
+
+/* Buttons: 1px border, 2px radius, no shadow. The primary is amber ground
+   with page-ground ink — measured at 9.6:1 on the dial theme and 5.2:1 on
+   paper, so it clears 4.5:1 in both. */
+.btn,
+.picker > button,
+.period > button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--s1);
+  min-height: 36px;
+  padding: 0 var(--s2);
+  background: none;
+  color: var(--ink);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  font-size: var(--t-sm);
+  font-weight: 500;
+  cursor: pointer;
+  transition: opacity var(--dur-fast) var(--ease);
+}
+
+.btn:hover,
+.picker > button:hover,
+.period > button:hover {
+  border-color: var(--rule-strong);
+}
+
+.btn.is-primary {
+  background: var(--dial);
+  color: var(--bg);
+  border-color: var(--dial);
+  font-weight: 600;
+}
+
+.btn.is-danger {
+  color: var(--over);
+  border-color: var(--over);
+}
+
+.btn.is-quiet {
+  border-color: transparent;
+  color: var(--ink-dim);
+  padding: 0 var(--s1);
+}
+
+.btn.is-quiet:hover {
+  color: var(--ink);
+  border-color: var(--rule);
+}
+
+.btn[disabled],
+.btn[aria-disabled="true"] {
+  color: var(--ink-dim);
+  border-color: var(--rule);
+  cursor: default;
+}
+
+.btn.is-row {
+  width: 100%;
+  justify-content: flex-start;
+  min-height: 44px;
+  border-color: transparent;
+  border-top: 1px solid var(--rule);
+  border-radius: 0;
+  font-weight: 400;
+  font-size: var(--t-body);
+}
+
+.period {
+  display: flex;
+  align-items: center;
+  gap: var(--s1);
+}
+
+.period__label {
+  min-width: 10ch;
+  text-align: center;
+}
+
+.picker {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.picker__sep {
+  color: var(--ink-dim);
+}
+
+.picker > button.is-active {
+  color: var(--ink);
+  border-color: var(--rule-strong);
+}
+
+/* ---------------------------------------------------- notices, undo, strip */
+.notice {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--s2);
+  padding: var(--s1) var(--s2);
+  border-top: 1px solid var(--rule);
+  border-bottom: 1px solid var(--rule);
+  border-left: 2px solid transparent;
+  font-size: var(--t-sm);
+}
+
+.notice__body {
+  flex: 1 1 18ch;
+  min-width: 0;
+}
+
+.notice__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s1);
+}
+
+.notice.is-info {
+  border-left-color: var(--rule-strong);
+}
+
+.notice.is-warn {
+  border-left-color: var(--warn);
+}
+
+.notice.is-error {
+  border-left-color: var(--over);
+}
+
+.notice.is-sample {
+  border-left-color: var(--gauge);
+}
+
+/* The one live region. Nothing ever flies in from a corner: the undo band
+   sits under the list it belongs to. */
+.strip {
+  max-width: var(--max);
+  margin: var(--s3) auto 0;
+  padding: 0 var(--gutter);
+}
+
+.strip:empty {
+  display: none;
+  margin: 0;
+}
+
+.undo {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s2);
+  padding: var(--s1) 0;
+  border-top: 1px solid var(--rule);
+  border-bottom: 1px solid var(--rule);
+  font-size: var(--t-sm);
+}
+
+.undo__count {
+  color: var(--ink-dim);
+}
+
+.noscript {
+  max-width: 520px;
+  margin: var(--s3) auto;
+  padding: 0 var(--gutter);
+  font-family: var(--font-prose);
+  font-size: var(--t-prose);
+  line-height: var(--lh-prose);
+}
+
+/* ----------------------------------------------------------------- dialog */
+.dialog {
+  width: calc(100% - 2 * var(--gutter));
+  max-width: 560px;
+  padding: 0;
+  background: var(--bg);
+  color: var(--ink);
+  border: 1px solid var(--rule-strong);
+  border-radius: 0;
+}
+
+.dialog::backdrop {
+  background: var(--scrim);
+}
+
+.dialog__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--s2);
+  padding: var(--s2);
+  border-bottom: 1px solid var(--rule);
+}
+
+.dialog__body {
+  padding: var(--s2);
+}
+
+.dialog__actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--s1);
+  padding: var(--s2);
+  border-top: 1px solid var(--rule);
+}
+
+/* ------------------------------------------------------------ empty state
+   G9: the ledger's rules are already printed, the lines are simply empty.
+   Serif prose sits on them the way handwriting sits on ruled paper. */
+.empty {
+  position: relative;
+  max-width: 520px;
+  padding: var(--s2) 0;
+}
+
+.empty__ghost {
+  position: absolute;
+  z-index: 0;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: calc(var(--row-h) * 3);
+  border-top: 1px solid var(--rule);
+  pointer-events: none;
+}
+
+.empty__ghost::before,
+.empty__ghost::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: var(--rule);
+}
+
+.empty__ghost::before {
+  top: var(--row-h);
+}
+
+.empty__ghost::after {
+  top: calc(var(--row-h) * 2);
+}
+
+.empty__title,
+.empty__body,
+.empty__actions,
+.empty__foot {
+  position: relative;
+  z-index: 1;
+}
+
+.empty__title {
+  font-family: var(--font-prose);
+  font-size: var(--t-prose-h);
+  font-weight: 400;
+  line-height: 1.3;
+}
+
+.empty__body {
+  margin-top: var(--s2);
+  font-family: var(--font-prose);
+  font-size: var(--t-prose);
+  line-height: var(--lh-prose);
+}
+
+/* Three real actions as full-width rows, not a row of buttons side by side. */
+.empty__actions {
+  margin-top: var(--s2);
+  display: grid;
+}
+
+.empty__actions .btn.is-row:last-child {
+  border-bottom: 1px solid var(--rule);
+}
+
+.empty__foot {
+  margin-top: var(--s2);
+  font-size: var(--t-sm);
+  color: var(--ink-dim);
+}
+
+/* --------------------------------------------------------------- dropzone */
+.dropzone {
+  border: 1px dashed var(--rule);
+  border-radius: 0;
+  padding: var(--s3) var(--s2);
+  text-align: center;
+  font-size: var(--t-sm);
+  color: var(--ink-dim);
+}
+
+/* Inset outline instead of a border: a drag can never nudge the layout. */
+.is-dropping {
+  outline: 1px dashed var(--dial);
+  outline-offset: -1px;
+}
+
+.dropzone.is-dropping {
+  border-color: var(--dial);
+  color: var(--ink);
+}
+
+/* ------------------------------------------------------------- wizard/data */
+.steps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s2);
+  padding-bottom: var(--s1);
+  border-bottom: 1px solid var(--rule);
+  font-size: var(--t-sm);
+  color: var(--ink-dim);
+}
+
+.steps__item.is-active {
+  color: var(--ink);
+}
+
+.preview {
+  overflow-x: auto;
+  margin-top: var(--s2);
+}
+
+.preview .table {
+  min-width: 480px;
+}
+
+.storage {
+  display: grid;
+  gap: 4px;
+  font-size: var(--t-sm);
+}
+
+.storage__bar {
+  height: 6px;
+  border: 1px solid var(--rule);
+}
+
+.storage__fill {
+  height: 100%;
+  background: var(--dial);
+}
+
+/* -------------------------------------------------------- dark adaptation
+   One orchestrated 600ms sequence, once per session, driven by .adapt on
+   <html>: ink rises from 0.35 to 1, the section rules extend left to right,
+   the scale readings slide from zero to their real value, and the ledger rows
+   only gain opacity in the last 120ms. Steps are spaced by --stagger (60ms).
+   Nothing else in the app animates beyond 120ms, and only opacity/transform. */
+@keyframes moon-ink {
+  from { opacity: 0.35; }
+  to { opacity: 1; }
+}
+
+@keyframes moon-rule {
+  from { transform: scaleX(0); }
+  to { transform: scaleX(1); }
+}
+
+@keyframes moon-wipe {
+  from { clip-path: inset(0 100% 0 0); }
+  to { clip-path: inset(0 0 0 0); }
+}
+
+.adapt .view,
+.adapt .rail,
+.adapt .top__controls {
+  animation: moon-ink var(--dur-adapt) var(--ease) both;
+}
+
+.adapt .hero__value,
+.adapt .hero__trail {
+  animation: moon-wipe calc(var(--dur-adapt) * 0.5) var(--ease) both;
+}
+
+.adapt .section__head::after {
+  animation: moon-rule calc(var(--dur-adapt) * 0.4) var(--ease) var(--stagger) both;
+}
+
+.adapt .meter__scale {
+  animation: moon-wipe calc(var(--dur-adapt) * 0.5) var(--ease) calc(var(--stagger) * 2) both;
+}
+
+.adapt .ledger {
+  animation: moon-ink var(--dur-fast) var(--ease) calc(var(--dur-adapt) - var(--dur-fast)) both;
+}
+
+/* --------------------------------------------------- < 768px: phone layout
+   The rail becomes a fixed bottom bar of four cells: three primary sections
+   plus "Daha". The "more" items open upward as a leaf sheet. */
+@media (max-width: 767px) {
+  :root {
+    --gutter: 1rem;
+    --amount-col: 104px;
+    --day-col: 0px;
+    --cat-col: 9ch;
+  }
+
+  body {
+    padding-bottom: calc(var(--rail-h) + var(--s3));
+  }
+
+  .top {
+    padding: var(--s2) var(--gutter);
+  }
+
+  .shell {
+    padding: var(--s2) var(--gutter) var(--s3);
+  }
+
+  .hero {
+    padding: var(--s2);
+  }
+
+  .hero__aside {
+    position: static;
+    margin-top: 0;
+  }
+
+  .hero__value {
+    margin-top: 4px;
+  }
+
+  /* 44px touch targets everywhere a finger lands. */
+  .btn,
+  .picker > button,
+  .period > button,
+  .rail__item,
+  .rail__more,
+  .switch {
+    min-height: 44px;
+  }
+
+  input[type="text"],
+  input[type="search"],
+  input[type="number"],
+  input[type="date"],
+  input[type="month"],
+  select,
+  textarea {
+    min-height: 44px;
+  }
+
+  .rail {
+    position: fixed;
+    z-index: 40;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    align-items: stretch;
+    max-height: 70vh;
+    overflow-y: auto;
+    background: var(--bg);
+    border-top: 1px solid var(--rule);
+  }
+
+  .rail__item {
+    justify-content: center;
+    min-height: var(--rail-h);
+    padding: 0 4px;
+    font-size: var(--t-sm);
+    text-align: center;
+    border-left: 0;
+    border-top: 2px solid transparent;
+    border-bottom: 0;
+  }
+
+  .rail__item.is-active,
+  .rail__item[aria-current="page"] {
+    border-top-color: var(--dial);
+  }
+
+  .rail__item[data-rail="more"] {
+    display: none;
+  }
+
+  .rail__more {
+    display: flex;
+    min-height: var(--rail-h);
+    border-left: 0;
+  }
+
+  .rail__more[aria-expanded="true"] {
+    color: var(--ink);
+  }
+
+  /* The leaf sheet: "more" items take a full row each and stack above the bar
+     (order: -1), so the fixed rail grows upward from the bottom edge. */
+  .rail.is-open .rail__item[data-rail="more"] {
+    display: flex;
+    grid-column: 1 / -1;
+    order: -1;
+    justify-content: flex-start;
+    min-height: 44px;
+    padding: 0 var(--gutter);
+    text-align: left;
+    border-top: 1px solid var(--rule);
+  }
+
+  .rail:has(.rail__more[aria-expanded="true"]) .rail__item[data-rail="more"] {
+    display: flex;
+    grid-column: 1 / -1;
+    order: -1;
+    justify-content: flex-start;
+    min-height: 44px;
+    padding: 0 var(--gutter);
+    text-align: left;
+    border-top: 1px solid var(--rule);
+  }
+
+  .meter {
+    grid-template-columns: minmax(0, 1fr) auto;
+    row-gap: 4px;
+    padding: var(--s1) 0;
+  }
+
+  .meter__scale {
+    grid-column: 1 / -1;
+  }
+
+  .meter__readout {
+    text-align: right;
+  }
+
+  .meter__pct {
+    display: inline;
+  }
+
+  .meter__drift {
+    grid-column: 1 / -1;
+    text-align: left;
+  }
+
+  .meter.is-over .meter__readout {
+    text-align: right;
+    justify-self: end;
+  }
+
+  .ledger-row {
+    grid-template-columns:
+      minmax(0, var(--cat-col))
+      minmax(0, 1fr)
+      var(--amount-col)
+      var(--note-col);
+    min-height: 44px;
+  }
+
+  .ledger-row__actions {
+    display: none;
+  }
+
+  .ledger.is-flat .ledger-row {
+    grid-template-columns:
+      minmax(0, 56px)
+      minmax(0, 1fr)
+      var(--amount-col)
+      var(--note-col);
+  }
+
+  .ledger.is-flat .ledger-row__cat {
+    display: none;
+  }
+
+  .form {
+    max-width: none;
+  }
+}
+
+/* ------------------------------------------- 768–1099px: the rail as words
+   Seven words on one line, sitting on a 1px rule under the header. */
+@media (min-width: 768px) and (max-width: 1099px) {
+  .rail {
+    flex-wrap: nowrap;
+    align-items: stretch;
+    gap: clamp(var(--s1), 2vw, var(--s3));
+    padding-bottom: 0;
+    border-bottom: 1px solid var(--rule);
+  }
+
+  .rail__item {
+    flex: 0 1 auto;
+    min-width: 0;
+    padding: 4px 0 6px;
+    white-space: nowrap;
+    border-left: 0;
+  }
+
+  .rail__item.is-active,
+  .rail__item[aria-current="page"] {
+    border-bottom-color: var(--dial);
+  }
+
+  .rail__more {
+    display: none;
+  }
+}
+
+/* --------------------------------------------- >= 1100px: the vertical rail */
+@media (min-width: 1100px) {
+  .shell {
+    grid-template-columns: var(--rail) minmax(0, 1fr);
+    gap: var(--s3);
+  }
+
+  .rail {
+    position: sticky;
+    top: var(--s2);
+    align-self: start;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  /* The label starts exactly on the page's single left line; the 2px active
+     rule hangs out into the margin, the way a lab-book mark does. */
+  .rail__item {
+    min-height: 28px;
+    border-bottom: 0;
+    padding-left: var(--s1);
+    margin-left: calc(var(--s1) * -1 - 2px);
+  }
+
+  .rail__item.is-active,
+  .rail__item[aria-current="page"] {
+    border-left-color: var(--dial);
+  }
+
+  .rail__more {
+    display: none;
+  }
+
+  .hero {
+    padding: var(--s3);
+  }
+}
+
+/* ------------------------------------------------------- reduced motion
+   Nothing animates. Every animation in this file ends at the element's
+   natural state, so switching them off shows that state directly and no
+   information is lost. app.js never adds .adapt here either; the rules below
+   are the belt to that braces. The near-zero duration on everything else is
+   the safety net for any transition added later. */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --stagger: 0ms;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-delay: 0ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    transition-delay: 0ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  .adapt .view,
+  .adapt .rail,
+  .adapt .top__controls,
+  .adapt .hero__value,
+  .adapt .hero__trail,
+  .adapt .section__head::after,
+  .adapt .meter__scale,
+  .adapt .ledger {
+    animation: none;
+  }
+}
+
+/* ------------------------------------------------------------------ print
+   Paper is a light theme with a different ink budget: named colours, no
+   amber, no plate. The rail and the controls carry no information on paper;
+   the tables under the charts carry all of it. */
+@media print {
+  :root,
+  :root[data-theme="dial"],
+  :root[data-theme="paper"] {
+    color-scheme: light;
+
+    --bg: white;
+    --plate: white;
+    --rule: silver;
+    --rule-strong: gray;
+    --ink: black;
+    --ink-dim: dimgray;
+    --dial: black;
+    --gauge: dimgray;
+    --over: black;
+    --flare: black;
+    --warn: dimgray;
+    --focus: black;
+  }
+
+  body {
+    padding-bottom: 0;
+  }
+
+  .rail,
+  .rail__more,
+  .skip,
+  .top__controls,
+  .strip,
+  .filters,
+  .ledger-row__actions,
+  .form__actions,
+  .btn {
+    display: none;
+  }
+
+  .shell {
+    display: block;
+    max-width: none;
+    padding: 0;
+  }
+
+  .top {
+    max-width: none;
+    padding: 0 0 var(--s1);
+  }
+
+  .hero {
+    background: none;
+  }
+
+  .ledger-row:hover,
+  .ledger-row.is-active {
+    background: none;
+  }
+
+  /* The numbers under every chart open on paper. */
+  .numbers > summary {
+    display: none;
+  }
+
+  .numbers::details-content {
+    content-visibility: visible;
+    block-size: auto;
+  }
+
+  .day {
+    content-visibility: visible;
+    contain-intrinsic-size: auto;
+  }
+
+  /* A row, a scale and a strip are never cut in half. */
+  .ledger-row,
+  .meter,
+  .hero,
+  .notice,
+  .table tr {
+    break-inside: avoid;
+  }
+
+  .section__head {
+    break-after: avoid;
+  }
+}

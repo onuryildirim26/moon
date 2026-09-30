@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Moon — bütçe defteri</title>
+<meta name="description" content="Sunucusuz bütçe defteri. Harcamalarını yaz ya da banka ekstreni yükle; veri tarayıcında kalır, istediğin an JSON olarak indirirsin. / A serverless budget ledger: your data never leaves your browser.">
+<meta name="color-scheme" content="dark light">
+<meta name="theme-color" content="#0e1418">
+
+<meta property="og:type" content="website">
+<meta property="og:title" content="Moon — bütçe defteri">
+<meta property="og:description" content="Hesap yok, sunucu yok, istek yok. Harcamaları yaz ya da CSV ekstre yükle; veri tarayıcında kalır.">
+<meta property="og:image" content="assets/onizleme.png">
+
+<link rel="icon" href="assets/moon.svg" type="image/svg+xml">
+
+<!-- The only outbound request this app makes. Delete these three tags for a
+     fully offline build: the fallback stacks in tokens.css keep the layout. -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@75..112,400..700&family=Spectral:ital,wght@0,400;0,600;1,400&display=swap">
+
+<link rel="stylesheet" href="css/tokens.css">
+<link rel="stylesheet" href="css/moon.css">
+
+<script>
+/* Apply the stored theme before first paint so the page never flashes the
+   wrong surface. Reads one key, tolerates every failure, sets nothing else. */
+(function () {
+  try {
+    var raw = localStorage.getItem("moon.v1");
+    if (!raw) return;
+    var theme = JSON.parse(raw).settings.theme;
+    if (theme === "dial" || theme === "paper") {
+      document.documentElement.setAttribute("data-theme", theme);
+    }
+  } catch (e) { /* private mode, blocked storage, bad JSON: keep defaults */ }
+})();
+</script>
+</head>
+
+<body>
+<a class="skip" href="#view">İçeriğe geç</a>
+
+<header class="top">
+  <h1 class="brand">
+    <svg class="brand__disc" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" focusable="false">
+      <circle cx="12" cy="12" r="10.5" fill="none" stroke="currentColor" stroke-width="1"/>
+      <path d="M12 1.5 A10.5 10.5 0 0 0 12 22.5 Z" fill="currentColor" opacity="0.55"/>
+      <line x1="12" y1="1.5" x2="12" y2="22.5" stroke="currentColor" stroke-width="1"/>
+    </svg>
+    Moon
+  </h1>
+
+  <!-- app.js fills these four controls; they stay empty without JS. -->
+  <div class="top__controls">
+    <div class="period" id="period-control"></div>
+    <div class="picker" id="currency-control"></div>
+    <div class="picker" id="lang-control"></div>
+    <div class="picker" id="theme-control"></div>
+  </div>
+</header>
+
+<div class="shell">
+  <!-- Real anchors: the back button works and the URL survives on file://.
+       data-rail="primary" items stay in the phone bottom bar; "more" items
+       move into the sheet that #rail-more toggles. -->
+  <nav class="rail" id="rail" aria-label="Bölümler">
+    <a class="rail__item" href="#panel"    data-i18n="nav.panel"     data-rail="primary">Panel</a>
+    <a class="rail__item" href="#defter"   data-i18n="nav.ledger"    data-rail="primary">Defter</a>
+    <a class="rail__item" href="#limitler" data-i18n="nav.limits"    data-rail="primary">Limitler</a>
+    <a class="rail__item" href="#tekrar"   data-i18n="nav.recurring" data-rail="more">Tekrar</a>
+    <a class="rail__item" href="#hedefler" data-i18n="nav.goals"     data-rail="more">Hedefler</a>
+    <a class="rail__item" href="#borc"     data-i18n="nav.debts"     data-rail="more">Borç</a>
+    <a class="rail__item" href="#veri"     data-i18n="nav.data"      data-rail="more">Veri</a>
+    <button class="rail__more" id="rail-more" type="button" aria-expanded="false" aria-controls="rail" data-i18n="nav.more">Daha</button>
+  </nav>
+
+  <main class="view" id="view" tabindex="-1"></main>
+</div>
+
+<!-- The one live region in the app: undo strips and write warnings land here.
+     Nothing ever pops out of a corner. -->
+<div class="strip" id="strip" role="status" aria-live="polite"></div>
+
+<noscript>
+  <p class="noscript">
+    Moon hesaplamaları tarayıcıda yapar, bu yüzden JavaScript gerekiyor.
+    Açtığında hiçbir veri dışarı gitmez.
+  </p>
+</noscript>
+
+<!-- Load order is the dependency order; see spec 02-sozlesme.md §1.
+     Every file is an IIFE writing to one branch of window.Moon. -->
+<script src="js/core.js"></script>
+<script src="js/money.js"></script>
+<script src="js/dates.js"></script>
+<script src="js/lang.tr.js"></script>
+<script src="js/lang.en.js"></script>
+<script src="js/i18n.js"></script>
+<script src="js/store.js"></script>
+<script src="js/model.js"></script>
+<script src="js/csv.js"></script>
+<script src="js/importer.js"></script>
+<script src="js/charts.js"></script>
+<script src="js/ui.js"></script>
+<script src="js/sample.js"></script>
+<script src="js/views.panel.js"></script>
+<script src="js/views.ledger.js"></script>
+<script src="js/views.limits.js"></script>
+<script src="js/views.plan.js"></script>
+<script src="js/views.data.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,156 @@
+/* Moon — design tokens.
+ *
+ * Direction: "Dial and Ledger" — a night-desk measuring instrument.
+ * Dark ("Dial") is the default surface; the system preference for light wins
+ * unless the reader picked a theme, and an explicit pick beats both.
+ *
+ * Structure comes from 1px rules and whitespace only:
+ * no box-shadow anywhere, no gradients, radius is 0 or 2px.
+ * Amber (--dial) is reserved for data marks, the active rail item and the
+ * primary button. It never tints body text or fills a background.
+ */
+
+:root {
+  color-scheme: dark;
+
+  /* --- surfaces -------------------------------------------------------- */
+  --bg: #0e1418;           /* page ground: blue graphite, never pure black */
+  --plate: #151d23;        /* instrument face: hero strip, focused row only */
+  --rule: #23303a;         /* 1px rules, scale ticks, input borders        */
+  --rule-strong: #35454f;  /* section dividers, axis baselines             */
+
+  /* --- ink ------------------------------------------------------------- */
+  --ink: #dde4e9;          /* body text and every numeral                   */
+  --ink-dim: #8b9ba7;      /* category, date, tick labels, cents, help      */
+
+  /* --- data ------------------------------------------------------------ */
+  --dial: #e6a94f;         /* amber: expense data, active nav, primary CTA  */
+  --gauge: #7fb2c4;        /* cool: income, savings, money owed to you      */
+  --over: #d9705a;         /* iron oxide: over limit (default mark)         */
+  --flare: #f4f8fa;        /* opt-in alternative over-limit mark            */
+  --warn: #c9a24b;         /* brass: past 90% of a limit, due soon          */
+  --focus: #ffc978;        /* focus ring — never removed                    */
+
+  /* --- type ------------------------------------------------------------ */
+  --font-ui: "Archivo", "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
+  --font-prose: "Spectral", Georgia, "Times New Roman", serif;
+
+  --t-hero: clamp(2.5rem, 7vw, 3.25rem);  /* 40 → 52px, weight 300         */
+  --t-mid: 1.25rem;                        /* 20px — period totals, limits  */
+  --t-prose-h: 1.5rem;                     /* 24px serif — empty states     */
+  --t-prose: 1.0625rem;                    /* 17px serif body               */
+  --t-body: 1rem;                          /* 16px                          */
+  --t-amount: 0.9375rem;                   /* 15px, weight 500, tnum        */
+  --t-sm: 0.8125rem;                       /* 13px — rail, secondary        */
+  --t-h2: 0.8125rem;                       /* 13px, weight 600              */
+  --t-tick: 0.6875rem;                     /* 11px — SVG axis ends only     */
+
+  --lh-tight: 1.1;
+  --lh-body: 1.55;
+  --lh-prose: 1.6;
+
+  /* --- space (vertical rhythm 8/16/24/40/64) ---------------------------- */
+  --s1: 0.5rem;
+  --s2: 1rem;
+  --s3: 1.5rem;
+  --s5: 2.5rem;
+  --s8: 4rem;
+
+  /* --- layout ---------------------------------------------------------- */
+  --max: 1160px;
+  --rail: 232px;
+  --gutter: 1.5rem;        /* 16px below 768px, set in moon.css            */
+  --amount-col: 140px;     /* 104px below 768px                            */
+  --note-col: 28px;        /* single-character margin marks: † ○ ↧         */
+  --row-h: 52px;           /* ledger row, 44px touch minimum on phones      */
+  --row-h-dense: 36px;
+  --radius: 2px;           /* inputs and buttons only                       */
+
+  /* --- motion ---------------------------------------------------------- */
+  --dur-fast: 120ms;
+  --dur-adapt: 600ms;      /* the one orchestrated moment: dark adaptation  */
+  --ease: cubic-bezier(0.2, 0, 0.3, 1);
+}
+
+/* The reader's system asks for light and they have not pinned the dial. */
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dial"]) {
+    color-scheme: light;
+
+    --bg: #e8ecef;
+    --plate: #f3f6f8;
+    --rule: #c6d0d7;
+    --rule-strong: #9faeb7;
+
+    --ink: #141e27;
+    --ink-dim: #55646e;
+
+    --dial: #8a5510;
+    --gauge: #1f5a6b;
+    --over: #8a3324;
+    --flare: #0a1015;
+    --warn: #7a5a14;
+    --focus: #b36f16;
+  }
+}
+
+/* Explicit picks override the system in both directions. */
+:root[data-theme="paper"] {
+  color-scheme: light;
+
+  --bg: #e8ecef;
+  --plate: #f3f6f8;
+  --rule: #c6d0d7;
+  --rule-strong: #9faeb7;
+
+  --ink: #141e27;
+  --ink-dim: #55646e;
+
+  --dial: #8a5510;
+  --gauge: #1f5a6b;
+  --over: #8a3324;
+  --flare: #0a1015;
+  --warn: #7a5a14;
+  --focus: #b36f16;
+}
+
+:root[data-theme="dial"] {
+  color-scheme: dark;
+
+  --bg: #0e1418;
+  --plate: #151d23;
+  --rule: #23303a;
+  --rule-strong: #35454f;
+
+  --ink: #dde4e9;
+  --ink-dim: #8b9ba7;
+
+  --dial: #e6a94f;
+  --gauge: #7fb2c4;
+  --over: #d9705a;
+  --flare: #f4f8fa;
+  --warn: #c9a24b;
+  --focus: #ffc978;
+}
+
+/* Readers who ask for more contrast get stronger rules and dimmer ink. */
+@media (prefers-contrast: more) {
+  :root {
+    --rule: #3c4c57;
+    --rule-strong: #566a76;
+    --ink-dim: #aab8c2;
+  }
+  :root[data-theme="paper"],
+  :root:not([data-theme="dial"]) {
+    --rule: #9aa7b0;
+    --rule-strong: #6f7f8a;
+    --ink-dim: #41505a;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --dur-fast: 0ms;
+    --dur-adapt: 0ms;
+  }
+}

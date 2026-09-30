@@ -1,0 +1,38 @@
+# Bu depoda kişisel veri tutulmaz. Aşağıdakiler kazara eklenmesin diye engellenir.
+# No personal data lives in this repository. These patterns keep it that way.
+
+# Kullanıcı yedekleri / user data exports
+*.backup.json
+moon-yedek-*.json
+moon-backup-*.json
+/veri/
+/data/
+
+# Kişisel ekstre ve tablolar / personal statements and sheets
+*.ekstre.csv
+*.statement.csv
+*.xlsx
+*.xls
+
+# Ortam değişkenleri ve sırlar / environment and secrets
+.env
+.env.*
+*.key
+*.pem
+
+# İşletim sistemi ve editör / OS and editor
+.DS_Store
+Thumbs.db
+desktop.ini
+*.swp
+.idea/
+.vscode/
+*~
+
+# Bağımlılık ve derleme çıktısı (bu projede olmamalı) / build output (should not exist here)
+node_modules/
+dist/
+build/
+
+# Yerel geliştirme araçları / local tooling
+.claude/

@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32">
+  <!-- The mark is the period disc: a fixed circle whose vertical boundary line
+       is the reading. Not a moon phase, not a pie slice. One colour, no gradient. -->
+  <circle cx="16" cy="16" r="14" fill="none" stroke="#e6a94f" stroke-width="2"/>
+  <path d="M16 2 A14 14 0 0 0 16 30 Z" fill="#e6a94f" opacity="0.55"/>
+  <line x1="16" y1="2" x2="16" y2="30" stroke="#e6a94f" stroke-width="2"/>
+</svg>
