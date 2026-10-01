@@ -49,6 +49,9 @@
 
   var open = false;
   var node = null;
+  /* Remembered for the session, not stored: someone working through a pile of
+     receipts turns it on once and it lasts as long as the pile does. */
+  var keepGoing = false;
   var lastFocus = null;
   var state = null;
 
@@ -127,7 +130,20 @@
     var target = into || state;
     if (!target) return;
 
-    if (key === "back") {
+    if (key === "plus" || key === "minus") {
+      /* A second operator resolves the first, so 10 + 20 + 30 chains the way a
+         calculator does rather than forgetting the middle number. */
+      var carried = target.pending
+        ? apply(target.pending.value, target.pending.op, minorOf(target.digits))
+        : minorOf(target.digits);
+      target.pending = { op: key, value: carried };
+      target.digits = "";
+    } else if (key === "equals") {
+      if (!target.pending) return;
+      target.digits = String(apply(target.pending.value, target.pending.op, minorOf(target.digits)));
+      if (target.digits === "0") target.digits = "";
+      target.pending = null;
+    } else if (key === "back") {
       target.digits = target.digits.slice(0, -1);
     } else if (key === "mark") {
       /* The decimal key is where a calculator puts it, but Moon's amounts are
@@ -212,6 +228,74 @@
     if (picker && picker.value !== state.date) picker.value = state.date;
   }
 
+  /* --------------------------------------------------------- the account */
+
+  /* Which account the last entry came out of. A reader pays with the same card
+     most days, so remembering it costs nothing and saves a tap; a reader with
+     no accounts never sees any of this. */
+  function lastAccount() {
+    var Model = Moon.Model;
+    if (!Model || typeof Model.accounts !== "function") return null;
+    var accounts = safe(function () { return Model.accounts(); }, []) || [];
+    if (!accounts.length) return null;
+
+    var entries = safe(function () { return Model.entries({}); }, []) || [];
+    for (var i = 0; i < entries.length; i += 1) {
+      var id = entries[i] && entries[i].accountId;
+      if (!id) continue;
+      for (var j = 0; j < accounts.length; j += 1) {
+        if (accounts[j].id === id) return id;
+      }
+    }
+    return accounts[0].id;
+  }
+
+  function accountRow() {
+    var Model = Moon.Model;
+    if (!Model || typeof Model.accounts !== "function") return null;
+    var accounts = safe(function () { return Model.accounts(); }, []) || [];
+    /* One account is not a choice, and none is not a concept. The row appears
+       only when the reader actually has somewhere to put the question. */
+    if (accounts.length < 2) return null;
+
+    var chips = accounts.map(function (account) {
+      var chip = dom.el("button", {
+        "class": "qa__acc",
+        type: "button",
+        style: { "--tone": tone(account.color) },
+        "aria-pressed": account.id === state.account ? "true" : "false"
+      }, [
+        dom.el("span", { "class": "qa__acc__icon", "aria-hidden": "true" }, account.icon || "•"),
+        dom.el("span", {}, account.name)
+      ]);
+      chip.dataset.account = account.id;
+      chip.addEventListener("click", function () {
+        state.account = account.id;
+        paintAccount();
+      }, false);
+      return chip;
+    });
+
+    return dom.el("div", {
+      "class": "qa__accs",
+      role: "group",
+      "aria-label": t("quick.account")
+    }, chips);
+  }
+
+  function paintAccount() {
+    if (!node || !state) return;
+    var chips = node.querySelectorAll(".qa__acc");
+    Array.prototype.slice.call(chips).forEach(function (chip) {
+      var on = chip.dataset && chip.dataset.account === state.account;
+      chip.setAttribute("aria-pressed", on ? "true" : "false");
+      if (chip.classList) {
+        if (on) chip.classList.add("is-on");
+        else chip.classList.remove("is-on");
+      }
+    });
+  }
+
   /* ------------------------------------------------------- the categories */
 
   /* Most recently written first, then the rest in their own order. The reader's
@@ -293,6 +377,7 @@
       categoryId: category.id,
       note: state.note || ""
     };
+    if (state.account) values.accountId = state.account;
 
     /* The ledger owns how a draft is assembled — the direction rule, the fixed
        mark, the length ceilings. Going through it is what keeps a record
@@ -315,6 +400,10 @@
       };
     }
 
+    /* buildDraft names the fields it knows; the account is this sheet's own
+       addition, so it is set on the draft rather than hoped for. */
+    if (state.account && !draft.accountId) draft.accountId = state.account;
+
     var id = safe(function () { return Model.addEntry(draft); }, null);
     if (!id) return;
 
@@ -324,7 +413,19 @@
     var panel = Moon.Views && Moon.Views.panel;
     if (panel && typeof panel.markWrite === "function") safe(function () { panel.markWrite(); });
 
-    close();
+    if (keepGoing) {
+      /* The date, the account and the toggle survive; the amount and the note
+         do not, because those are the two things that differ between one
+         receipt and the next. */
+      state.digits = "";
+      state.pending = null;
+      state.note = "";
+      var noteField = node && node.querySelector(".qa__note");
+      if (noteField) noteField.value = "";
+      paintAmount();
+    } else {
+      close();
+    }
 
     var UI = Moon.UI;
     if (UI && typeof UI.undoStrip === "function") {
@@ -341,26 +442,55 @@
 
   /* ------------------------------------------------------------- the sheet */
 
+  /* Plus and minus, and deliberately not times or divide.
+
+     The digits fill from the right, the way every one of these keypads does:
+     typing 5000 means 50,00. Addition and subtraction are then exact, because
+     both sides are the same kind of integer — which is what someone splitting a
+     restaurant bill or adding up a handful of receipts actually needs.
+
+     Multiplication is a trap under that rule. A reader who wants "three of
+     these" types 3 and the keypad has already read it as three kuruş, so the
+     answer would be wrong by a factor of a hundred and would look plausible.
+     Two honest keys beat four where two of them lie. */
+  var OPS = { plus: "+", minus: "−" };
+
+  function apply(left, op, right) {
+    var out = op === "minus" ? left - right : left + right;
+    /* An amount is a magnitude. Subtracting past zero is a reader correcting
+       themselves, not asking for a negative expense, so the floor holds. */
+    return out > 0 ? out : 0;
+  }
+
   function keypad() {
     var rows = [
-      ["1", "2", "3"],
-      ["4", "5", "6"],
-      ["7", "8", "9"],
-      [decimalMark(), "0", "back"]
+      ["1", "2", "3", "back"],
+      ["4", "5", "6", "plus"],
+      ["7", "8", "9", "minus"],
+      ["0", decimalMark(), "equals"]
     ];
+
+    var labels = {
+      back: "⌫", plus: OPS.plus, minus: OPS.minus, equals: "="
+    };
+    var names = {
+      back: "a11y.backspace", plus: "a11y.plus", minus: "a11y.minus", equals: "a11y.equals"
+    };
 
     var keys = [];
     rows.forEach(function (row) {
       row.forEach(function (key) {
-        var isBack = key === "back";
-        var label = isBack ? "⌫" : key;
+        var special = Object.prototype.hasOwnProperty.call(labels, key);
+        var wide = key === "0";
         var button = dom.el("button", {
-          "class": "qa__key" + (isBack ? " qa__key--back" : ""),
+          "class": "qa__key"
+            + (special ? " qa__key--" + key : "")
+            + (wide ? " qa__key--wide" : ""),
           type: "button",
-          "aria-label": isBack ? t("a11y.backspace") : label
-        }, label);
+          "aria-label": special ? t(names[key]) : key
+        }, special ? labels[key] : key);
         button.addEventListener("click", function () {
-          press(isBack ? "back" : (key === decimalMark() ? "mark" : key));
+          press(key === decimalMark() ? "mark" : key);
         }, false);
         keys.push(button);
       });
@@ -454,9 +584,24 @@
       t("common.cancel"));
     cancel.addEventListener("click", function () { close(); }, false);
 
+    var keep = dom.el("button", {
+      "class": "qa__keep" + (keepGoing ? " is-on" : ""),
+      type: "button",
+      "aria-pressed": keepGoing ? "true" : "false"
+    }, t("quick.keepGoing"));
+    keep.addEventListener("click", function () {
+      keepGoing = !keepGoing;
+      keep.setAttribute("aria-pressed", keepGoing ? "true" : "false");
+      if (keep.classList) {
+        if (keepGoing) keep.classList.add("is-on");
+        else keep.classList.remove("is-on");
+      }
+    }, false);
+
     var head = dom.el("div", { "class": "qa__head" }, [
       cancel,
-      dom.el("h2", { "class": "qa__title" }, t("quick.title"))
+      dom.el("h2", { "class": "qa__title" }, t("quick.title")),
+      keep
     ]);
 
     var amount = dom.el("div", { "class": "qa__face" }, [
@@ -473,6 +618,7 @@
     }, [
       head,
       dayRow(),
+      accountRow(),
       amount,
       noteRow(),
       keypad(),
@@ -512,7 +658,7 @@
     var doc = global.document;
     if (!doc || !doc.body) return;
 
-    state = { digits: "", date: today(), note: "" };
+    state = { digits: "", date: today(), note: "", pending: null, account: lastAccount() };
     lastFocus = doc.activeElement;
 
     node = safe(build, null);
@@ -563,7 +709,7 @@
 
     /* Its own object, never the module's: a selftest that typed into the open
        sheet would leave the reader looking at the test's digits. */
-    var pad = { digits: "", date: "2026-10-01", note: "" };
+    var pad = { digits: "", date: "2026-10-01", note: "", pending: null };
     press("0", pad);
     check("a zero cannot open an amount", pad.digits, "");
     press("5", pad);

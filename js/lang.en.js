@@ -666,6 +666,11 @@
 
     /* ----------------------------------------------------------- form ---- */
 
+    "quick.keepGoing": "Keep going",
+    "quick.account": "Which account",
+    "a11y.plus": "Add",
+    "a11y.minus": "Subtract",
+    "a11y.equals": "Work it out",
     "quick.open": "Add an expense",
     "quick.title": "New expense",
     "quick.title.income": "New income",

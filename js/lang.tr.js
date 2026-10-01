@@ -675,6 +675,11 @@
 
     /* ----------------------------------------------------------- form ---- */
 
+    "quick.keepGoing": "Arka arkaya",
+    "quick.account": "Hangi hesaptan",
+    "a11y.plus": "Ekle",
+    "a11y.minus": "Çıkar",
+    "a11y.equals": "Sonucu bul",
     "quick.open": "Harcama ekle",
     "quick.title": "Yeni harcama",
     "quick.title.income": "Yeni gelir",

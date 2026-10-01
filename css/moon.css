@@ -3709,3 +3709,69 @@ input[type="radio"] {
   .qa__key,
   .qa__grid { transition: none; }
 }
+
+/* The quick sheet's later additions: the arithmetic column, the account row
+   and the toggle that keeps the sheet open for the next receipt. */
+.qa__keys { grid-template-columns: repeat(4, 1fr); }
+
+.qa__key--wide { grid-column: span 2; }
+
+.qa__key--plus,
+.qa__key--minus,
+.qa__key--equals {
+  background: var(--surface-2);
+  color: var(--accent);
+}
+
+.qa__keep {
+  margin-left: auto;
+  min-height: 32px;
+  padding: 0 12px;
+  border: 1px solid var(--rule);
+  border-radius: 999px;
+  background: none;
+  color: var(--ink-faint);
+  font: inherit;
+  font-size: var(--t-label);
+  cursor: pointer;
+}
+
+.qa__keep.is-on {
+  border-color: var(--accent);
+  color: var(--ink);
+  background: var(--surface-2);
+}
+
+.qa__accs {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.qa__accs::-webkit-scrollbar { display: none; }
+
+.qa__acc {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+  min-height: 34px;
+  padding: 0 12px;
+  border: 1px solid var(--rule);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--ink-dim);
+  font: inherit;
+  font-size: var(--t-sm);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.qa__acc.is-on {
+  border-color: var(--tone);
+  background: color-mix(in srgb, var(--tone) 16%, transparent);
+  color: var(--ink);
+}
+
+.qa__acc__icon { font-size: 1rem; line-height: 1; }
