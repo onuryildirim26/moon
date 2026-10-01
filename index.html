@@ -1,20 +1,26 @@
 <!doctype html>
-<html lang="tr">
+<!-- English is the ground language: the markup below is what the page says
+     before a single script runs, and app.js only moves off it when a stored
+     preference says Turkish (it then relabels every tagged node). -->
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Moon — bütçe defteri</title>
+<title>Moon — a budget ledger</title>
 <meta name="description" content="Sunucusuz bütçe defteri. Harcamalarını yaz ya da banka ekstreni yükle; veri tarayıcında kalır, istediğin an JSON olarak indirirsin. / A serverless budget ledger: your data never leaves your browser.">
 <meta name="color-scheme" content="dark light">
 
 <!-- One bar colour per surface, so the phone's address bar matches the page
-     before a single script runs. Both values mirror --bg in css/tokens.css;
-     change them together. While the reader is on "system" these two media
-     queries are the whole story. A pinned theme contradicts the system, so
-     app.js retargets the `media` of these two tags (it never rewrites the
-     colours) — the dark one stays first for engines that ignore `media`. -->
+     before a single script runs. All three values mirror --bg in
+     css/tokens.css; change them together. While the reader is on "system" the
+     first two media queries are the whole story, and the third stays off: no
+     system preference asks for Prism, it is only ever picked. A pinned theme
+     contradicts the system, so app.js retargets the `media` of these tags (it
+     never rewrites the colours) — the dark one stays first for engines that
+     ignore `media`. -->
 <meta name="theme-color" data-surface="dial" media="(prefers-color-scheme: dark)" content="#0e1418">
 <meta name="theme-color" data-surface="paper" media="(prefers-color-scheme: light)" content="#e8ecef">
+<meta name="theme-color" data-surface="prism" media="not all" content="#120c24">
 
 <!-- Share cards are built by crawlers that do not resolve relative paths, so
      these two carry the published address. Change them if you fork this. -->
@@ -40,13 +46,15 @@
 
 <script>
 /* Apply the stored theme before first paint so the page never flashes the
-   wrong surface. Reads one key, tolerates every failure, sets nothing else. */
+   wrong surface. Reads one key, tolerates every failure, sets nothing else.
+   The list is the three pinnable materials; "system" is the absence of the
+   attribute, which is why it is not in it. */
 (function () {
   try {
     var raw = localStorage.getItem("moon.v1");
     if (!raw) return;
     var theme = JSON.parse(raw).settings.theme;
-    if (theme === "dial" || theme === "paper") {
+    if (theme === "dial" || theme === "paper" || theme === "prism") {
       document.documentElement.setAttribute("data-theme", theme);
     }
   } catch (e) { /* private mode, blocked storage, bad JSON: keep defaults */ }
@@ -55,7 +63,7 @@
 </head>
 
 <body>
-<a class="skip" href="#view">İçeriğe geç</a>
+<a class="skip" href="#view">Skip to the content</a>
 
 <header class="top">
   <h1 class="brand">
@@ -80,15 +88,15 @@
   <!-- Real anchors: the back button works and the URL survives on file://.
        data-rail="primary" items stay in the phone bottom bar; "more" items
        move into the sheet that #rail-more toggles. -->
-  <nav class="rail" id="rail" aria-label="Bölümler">
+  <nav class="rail" id="rail" aria-label="Sections">
     <a class="rail__item" href="#panel"    data-i18n="nav.panel"     data-rail="primary">Panel</a>
-    <a class="rail__item" href="#defter"   data-i18n="nav.ledger"    data-rail="primary">Defter</a>
-    <a class="rail__item" href="#limitler" data-i18n="nav.limits"    data-rail="primary">Limitler</a>
-    <a class="rail__item" href="#tekrar"   data-i18n="nav.recurring" data-rail="more">Tekrar</a>
-    <a class="rail__item" href="#hedefler" data-i18n="nav.goals"     data-rail="more">Hedefler</a>
-    <a class="rail__item" href="#borc"     data-i18n="nav.debts"     data-rail="more">Borç</a>
-    <a class="rail__item" href="#veri"     data-i18n="nav.data"      data-rail="more">Veri</a>
-    <button class="rail__more" id="rail-more" type="button" aria-expanded="false" aria-controls="rail" data-i18n="nav.more">Daha</button>
+    <a class="rail__item" href="#defter"   data-i18n="nav.ledger"    data-rail="primary">Ledger</a>
+    <a class="rail__item" href="#limitler" data-i18n="nav.limits"    data-rail="primary">Limits</a>
+    <a class="rail__item" href="#tekrar"   data-i18n="nav.recurring" data-rail="more">Recurring</a>
+    <a class="rail__item" href="#hedefler" data-i18n="nav.goals"     data-rail="more">Goals</a>
+    <a class="rail__item" href="#borc"     data-i18n="nav.debts"     data-rail="more">Debts</a>
+    <a class="rail__item" href="#veri"     data-i18n="nav.data"      data-rail="more">Data</a>
+    <button class="rail__more" id="rail-more" type="button" aria-expanded="false" aria-controls="rail" data-i18n="nav.more">More</button>
   </nav>
 
   <main class="view" id="view" tabindex="-1"></main>
@@ -100,8 +108,8 @@
 
 <noscript>
   <p class="noscript">
-    Moon hesaplamaları tarayıcıda yapar, bu yüzden JavaScript gerekiyor.
-    Açtığında hiçbir veri dışarı gitmez.
+    Moon does its measuring in the browser, so it needs JavaScript.
+    Turning it on sends nothing anywhere.
   </p>
 </noscript>
 

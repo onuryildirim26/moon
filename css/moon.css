@@ -1406,6 +1406,31 @@ input[type="radio"] {
   animation: moon-ink var(--dur-fast) var(--ease) calc(var(--dur-adapt) - var(--dur-fast)) both;
 }
 
+/* ------------------------------------------------------------ theme change
+   Changing material is the one colour change worth following with the eye, so
+   app.js puts .theming on <html> for a single --dur-theme window and takes it
+   off again. Two deliberate limits:
+
+   - Five named properties, never `transition: all`. A standing `all` would
+     animate every redraw — and a ledger redraws on every keystroke in the
+     search field, so every row would fade in behind the typing.
+   - No layout property is in the list. Only ink moves; the grid cannot jump.
+
+   The window is short enough that an element whose own 120ms opacity
+   transition is shadowed here (a row's action cluster, say) simply snaps for
+   those few frames. */
+.theming,
+.theming *,
+.theming *::before,
+.theming *::after {
+  transition:
+    color var(--dur-theme) var(--ease),
+    background-color var(--dur-theme) var(--ease),
+    border-color var(--dur-theme) var(--ease),
+    fill var(--dur-theme) var(--ease),
+    stroke var(--dur-theme) var(--ease);
+}
+
 /* --------------------------------------------------- < 768px: phone layout
    The rail becomes a fixed bottom bar of four cells: three primary sections
    plus "Daha". The "more" items open upward as a leaf sheet. */
@@ -1722,6 +1747,15 @@ input[type="radio"] {
   .adapt .ledger {
     animation: none;
   }
+
+  /* The theme swap lands in one frame. --dur-theme is already 0ms here; this
+     says it in the one place a reader of this file looks for it. */
+  .theming,
+  .theming *,
+  .theming *::before,
+  .theming *::after {
+    transition: none;
+  }
 }
 
 /* ------------------------------------------------------------------ print
@@ -1731,7 +1765,8 @@ input[type="radio"] {
 @media print {
   :root,
   :root[data-theme="dial"],
-  :root[data-theme="paper"] {
+  :root[data-theme="paper"],
+  :root[data-theme="prism"] {
     color-scheme: light;
 
     --bg: white;

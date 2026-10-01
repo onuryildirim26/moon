@@ -32,6 +32,28 @@
     return i18n && i18n.t ? i18n.t(key, params) : key;
   }
 
+  /* --------------------------------------------------- suggestion thresholds
+
+     Both suggestion features (budget template, recurring detection) are
+     median-based and both have to be defensible out loud, so every threshold
+     they use is named here instead of sitting inline. The UI quotes these
+     numbers back to the reader ("seen in 3 periods", "amount varies"), and a
+     magic number buried in a loop would drift away from the sentence. */
+
+  var SUGGEST_MAX_PERIODS = 6;          /* never read further back than this */
+  var SUGGEST_STEP_SMALL = 1000;        /* 10 currency units, in minor units */
+  var SUGGEST_STEP_LARGE = 10000;       /* 100 currency units */
+  var SUGGEST_SMALL_CEILING = 50000;    /* under 500 units, round by the small step */
+  var SUGGEST_CONFIDENCE_HIGH = 3;      /* periods with spending */
+  var SUGGEST_CONFIDENCE_MEDIUM = 2;
+
+  var RECURRING_KEY_CHARS = 16;         /* note prefix that decides "same payment" */
+  var RECURRING_MIN_PERIODS = 2;        /* two DIFFERENT periods, never two in one */
+  var RECURRING_AMOUNT_PCT = 25;        /* a member may sit 25% off the median */
+  var RECURRING_VARIES_PCT = 10;        /* past 10% the amount is called variable */
+  var RECURRING_MAX_ROWS = 20;
+  var RECURRING_LOOKBACK = 12;          /* periods scanned, ending with the current one */
+
   /* ----------------------------------------------------------- primitives */
 
   var DATE_RE = /^(\d{4})-(\d{2})-(\d{2})$/;
@@ -125,6 +147,70 @@
     var m = money();
     if (m && m.pct) return m.pct(part, whole);
     return Math.round((part / whole) * 100);
+  }
+
+  /* Median, never mean. One 4.000 TL month — a plane ticket, a dentist — drags
+     a mean upward and the suggested limit with it, and the reader would spend
+     the rest of the year under a ceiling they never asked for. Even counts take
+     the midpoint of the two middle values, rounded, so the answer stays an
+     integer minor amount. Input is copied before sorting. */
+  function median(values) {
+    if (!values || !values.length) return 0;
+    var sorted = values.slice().sort(function (a, b) { return a - b; });
+    var middle = sorted.length >> 1;
+    if (sorted.length % 2) return sorted[middle];
+    return Math.round((sorted[middle - 1] + sorted[middle]) / 2);
+  }
+
+  /* Round UP to a step the reader could have picked themselves.
+     Why up: a limit is a ceiling. The median is the typical month, so half the
+     months sit above it; rounding down would hand back a figure the data
+     already calls too tight, and the first period would open in overrun.
+     Why a step at all: "1.847,32 ₺" reads as a measurement the tool took, not
+     as a decision the reader made, and nobody edits a number like that — they
+     delete it. 100 units is the step people actually say out loud.
+     Why two steps: with one 100-unit step a 120 ₺ habit would round to 200 ₺,
+     a 66% jump. Under 500 units the step drops to 10 so the suggestion stays
+     recognisable as the reader's own spending. */
+  function roundUpLimit(minor) {
+    if (minor <= 0) return 0;
+    var step = minor < SUGGEST_SMALL_CEILING ? SUGGEST_STEP_SMALL : SUGGEST_STEP_LARGE;
+    return Math.ceil(minor / step) * step;
+  }
+
+  function periodKeyOf(date) {
+    var d = dates();
+    if (!d || !d.periodKey || !isDate(date)) return null;
+    var key = d.periodKey(date, monthStartDay());
+    return key ? String(key) : null;
+  }
+
+  /* The period the reader is standing in. `opts.period` lets a view ask about
+     the period in its own header instead of today's. */
+  function currentPeriodKey(opts) {
+    var o = opts || {};
+    if (o.period) return String(o.period);
+    var today = todayDate();
+    return today ? periodKeyOf(today) : null;
+  }
+
+  /* Complete periods before `currentKey`, oldest first. The period in progress
+     is excluded on purpose: nine days of groceries would read as a whole month
+     and every suggestion would come out too tight. A period counts as closed
+     only once its last day is behind today. */
+  function completePeriodsBefore(currentKey, count) {
+    var d = dates();
+    var out = [];
+    if (!d || !d.shiftPeriod || !currentKey) return out;
+    var today = todayDate();
+    for (var i = 1; i <= count; i += 1) {
+      var key = d.shiftPeriod(currentKey, -i);
+      var range = periodRange(key);
+      if (!range) continue;
+      if (today && range.end >= today) continue;
+      out.unshift(key);
+    }
+    return out;
   }
 
   /* ------------------------------------------------------------- reading */
@@ -615,6 +701,119 @@
     return out;
   }
 
+  /* ------------------------------------------------- budget template (1/2) */
+
+  /* "Suggest limits for me", read off the reader's own closed periods.
+     The whole feature is one median per category plus a readable rounding step;
+     nothing here is a model, a forecast or an average, and the same ledger
+     always produces the same suggestion.
+     What stays out: the period in progress (half a month suggests half a
+     limit), income categories (there is nothing to cap), archived categories
+     (periodSummary ignores their limits, so a limit there would be invisible),
+     and entries whose category no longer exists (a limit needs something to
+     hang from). Fixed categories DO get a row — rent is the easiest limit to
+     set correctly — but they are flagged so the UI can say that this one never
+     enters the daily-allowance pool. */
+  function suggestLimits(opts) {
+    var o = opts || {};
+    var basis = { periods: [], entryCount: 0, complete: false };
+    var out = { basis: basis, rows: [] };
+
+    var current = currentPeriodKey(o);
+    if (!current) return out;
+
+    var asked = int(o.maxPeriods);
+    var window = asked > 0 ? Math.min(asked, SUGGEST_MAX_PERIODS) : SUGGEST_MAX_PERIODS;
+    var candidates = completePeriodsBefore(current, window);
+    if (!candidates.length) return out;
+
+    var ranges = Object.create(null);
+    candidates.forEach(function (key) { ranges[key] = periodRange(key); });
+
+    var cats = categoryMap();
+    var observed = Object.create(null);    /* periodKey -> the ledger reaches here */
+    var byCategory = Object.create(null);  /* categoryId -> {periodKey: minor} */
+    var order = [];
+    var counted = 0;
+
+    list("entries").forEach(function (e) {
+      if (!e || !isDate(e.date)) return;
+      var key = null;
+      for (var i = 0; i < candidates.length; i += 1) {
+        var range = ranges[candidates[i]];
+        if (range && e.date >= range.start && e.date <= range.end) {
+          key = candidates[i];
+          break;
+        }
+      }
+      if (!key) return;
+      /* Any entry at all proves the reader was keeping the ledger that period,
+         so a period with income only still counts as observed — it just leaves
+         every expense median alone. */
+      observed[key] = true;
+      if (direction(e) === "in") return;
+      var cat = cats[e.categoryId];
+      if (!cat || cat.kind === "income" || cat.archived) return;
+      var amount = positiveInt(e.amount);
+      if (!amount) return;
+      var perPeriod = byCategory[cat.id];
+      if (!perPeriod) {
+        perPeriod = byCategory[cat.id] = Object.create(null);
+        order.push(cat.id);
+      }
+      perPeriod[key] = (perPeriod[key] || 0) + amount;
+      counted += 1;
+    });
+
+    basis.periods = candidates.filter(function (key) { return !!observed[key]; });
+    basis.entryCount = counted;
+    basis.complete = basis.periods.length > 0;
+    if (!basis.complete) return out;
+
+    var rows = [];
+    order.forEach(function (categoryId) {
+      var monthly = [];
+      var perPeriod = {};
+      basis.periods.forEach(function (key) {
+        var amount = byCategory[categoryId][key] || 0;
+        perPeriod[key] = amount;
+        /* A month with no spending is reported as 0 but kept OUT of the median.
+           Counting the empty months would halve the suggestion for anything
+           seasonal (clothing, repairs) and the reader would overrun it the
+           first time the category comes round again. monthsSeen says how thin
+           the evidence is, and `confidence` turns that into one word. */
+        if (amount > 0) monthly.push(amount);
+      });
+      if (!monthly.length) return;
+
+      var suggested = roundUpLimit(median(monthly));
+      if (!suggested) return;
+
+      var cat = cats[categoryId];
+      if (!cat) return;
+
+      rows.push({
+        categoryId: categoryId,
+        name: text(cat.name).trim() || t("common.unclassified"),
+        fixed: !!cat.fixed,
+        suggested: suggested,
+        current: limitFor(categoryId),
+        monthsSeen: monthly.length,
+        perPeriod: perPeriod,
+        confidence: monthly.length >= SUGGEST_CONFIDENCE_HIGH
+          ? "high"
+          : (monthly.length >= SUGGEST_CONFIDENCE_MEDIUM ? "medium" : "low")
+      });
+    });
+
+    /* Biggest suggestion first — that is where the reader's money is and where
+       a limit changes behaviour. Two stable passes give the composite order
+       without packing a sort key into a string. */
+    rows = util.sortBy(rows, function (row) { return util.lower(row.name); });
+    out.rows = util.sortBy(rows, function (row) { return row.suggested; }, true);
+    return out;
+  }
+
   /* The day a recurring rule falls on inside one period. The period can span
      two calendar months when monthStartDay > 1, and a day the month does not
      have (31 February) clamps to that month's last day. */
@@ -654,6 +853,167 @@
       out.push({ recurring: r, date: date, amount: positiveInt(r.amount) });
     });
     return util.sortBy(out, function (row) { return row.date; });
+  }
+
+  /* ----------------------------------------------- recurring detection (1/2) */
+
+  /* Identity of a repeated payment: same category, same direction, same first
+     16 characters of the note's search key. Short enough that "Spotify
+     Premium" and "Spotify" land together, long enough that "Migros" and
+     "Migros Toptan" do not pretend to be one subscription. */
+  function recurringKeyOf(categoryId, dir, noteOrName) {
+    var prefix = util.searchKey(noteOrName).slice(0, RECURRING_KEY_CHARS);
+    return prefix ? categoryId + "|" + dir + "|" + prefix : null;
+  }
+
+  function dayOfMonthOf(date) {
+    return isDate(date) ? +String(date).slice(8, 10) : 0;
+  }
+
+  /* The note that appears most often, which is what the reader would have
+     typed as the rule's name. Ties go to the earliest occurrence so the same
+     ledger always names the rule the same way. */
+  function commonNote(rows) {
+    var counts = Object.create(null);
+    var best = null;
+    rows.forEach(function (row) {
+      var note = text(row.note).trim();
+      if (!note) return;
+      counts[note] = (counts[note] || 0) + 1;
+    });
+    rows.forEach(function (row) {
+      var note = text(row.note).trim();
+      if (!note) return;
+      if (!best || counts[note] > counts[best]) best = note;
+    });
+    return best || "";
+  }
+
+  /* Repeated payments the reader has not turned into a rule yet.
+     This only reads: it proposes, the UI disposes, and promoteToRecurring is
+     the only thing that writes. Income counts too — a salary is the most
+     reliably recurring record in any ledger. */
+  function detectRecurring(opts) {
+    var o = opts || {};
+    var d = dates();
+    var current = currentPeriodKey(o);
+    if (!current || !d || !d.shiftPeriod) return [];
+
+    var asked = int(o.lookback);
+    var lookback = asked > 0 ? asked : RECURRING_LOOKBACK;
+    var first = periodRange(d.shiftPeriod(current, -(lookback - 1)));
+    var last = periodRange(current);
+    if (!first || !last) return [];
+
+    var from = first.start;
+    var to = last.end;
+    var cats = categoryMap();
+    var groups = Object.create(null);
+    var order = [];
+
+    list("entries").forEach(function (e) {
+      if (!e || !e.id || !isDate(e.date)) return;
+      if (e.date < from || e.date > to) return;
+      var amount = positiveInt(e.amount);
+      if (!amount) return;
+      /* A rule has to hang from a category that exists, and a record with no
+         note has no stable identity — grouping those together would propose
+         "a rule for everything you did not describe". */
+      var cat = cats[e.categoryId];
+      if (!cat) return;
+      var key = recurringKeyOf(cat.id, direction(e), e.note);
+      if (!key) return;
+
+      var group = groups[key];
+      if (!group) {
+        group = groups[key] = { key: key, categoryId: cat.id, direction: direction(e), rows: [] };
+        order.push(key);
+      }
+      group.rows.push({
+        entryId: e.id,
+        date: e.date,
+        amount: amount,
+        note: text(e.note),
+        fixed: isFixed(e, cats),
+        recurringId: e.recurringId || null
+      });
+    });
+
+    var ruleByKey = Object.create(null);
+    var ruleById = Object.create(null);
+    list("recurring").forEach(function (rule) {
+      if (!rule || !rule.id) return;
+      ruleById[rule.id] = rule;
+      var key = recurringKeyOf(rule.categoryId, rule.direction === "in" ? "in" : "out", rule.name);
+      if (key && !ruleByKey[key]) ruleByKey[key] = rule.id;
+    });
+
+    var out = [];
+    order.forEach(function (key) {
+      var group = groups[key];
+      var rows = util.sortBy(group.rows, function (row) { return row.date + "|" + row.entryId; });
+
+      /* Two passes over the amounts. The first median decides who belongs: a
+         single 900 ₺ grocery run must not pull a 90 ₺ weekly habit apart, so
+         anything further than 25% from it is dropped rather than averaged in.
+         The second median, over what is left, is the figure reported. */
+      var center = median(rows.map(function (row) { return row.amount; }));
+      if (!center) return;
+      var kept = rows.filter(function (row) {
+        return Math.abs(row.amount - center) * 100 <= RECURRING_AMOUNT_PCT * center;
+      });
+      if (kept.length < RECURRING_MIN_PERIODS) return;
+
+      var amount = median(kept.map(function (row) { return row.amount; }));
+      if (!amount) return;
+
+      /* The load-bearing rule: two different periods. Two coffees in one week
+         are a week, not a subscription. */
+      var periods = [];
+      kept.forEach(function (row) {
+        var periodKey = periodKeyOf(row.date);
+        if (periodKey && periods.indexOf(periodKey) === -1) periods.push(periodKey);
+      });
+      if (periods.length < RECURRING_MIN_PERIODS) return;
+      periods.sort();
+
+      var existingRuleId = null;
+      kept.forEach(function (row) {
+        if (!existingRuleId && row.recurringId && ruleById[row.recurringId]) {
+          existingRuleId = row.recurringId;
+        }
+      });
+      if (!existingRuleId && ruleByKey[key]) existingRuleId = ruleByKey[key];
+
+      out.push({
+        key: key,
+        name: commonNote(kept),
+        categoryId: group.categoryId,
+        direction: group.direction,
+        amount: amount,
+        amountVaries: kept.some(function (row) {
+          return Math.abs(row.amount - amount) * 100 > RECURRING_VARIES_PCT * amount;
+        }),
+        dayOfMonth: util.clamp(median(kept.map(function (row) {
+          return dayOfMonthOf(row.date);
+        })) || 1, 1, 31),
+        occurrences: kept.map(function (row) {
+          return { entryId: row.entryId, date: row.date, amount: row.amount };
+        }),
+        periods: periods,
+        existingRuleId: existingRuleId,
+        alreadyFixed: kept.every(function (row) { return row.fixed; })
+      });
+    });
+
+    /* Most periods first: a payment seen in five months is a surer rule than
+       one seen in two. Stable passes, least significant first, so the order is
+       total and the same ledger always lists them the same way. */
+    out = util.sortBy(out, function (row) { return row.key; });
+    out = util.sortBy(out, function (row) { return row.amount; }, true);
+    out = util.sortBy(out, function (row) { return row.occurrences.length; }, true);
+    out = util.sortBy(out, function (row) { return row.periods.length; }, true);
+    return out.slice(0, RECURRING_MAX_ROWS);
   }
 
   function goalSaved(goal) {
@@ -1298,6 +1658,67 @@
     });
   }
 
+  /* ------------------------------------------------- budget template (2/2) */
+
+  /* The rows the reader ticked, written in ONE update: nine limits are one
+     decision, so they are one entry in the undo/change history and one write to
+     storage, not nine. Rows the reader could not have been offered (an income
+     category, a vanished one, a zero suggestion) are skipped silently — the
+     list they chose from never contained them. Returns how many limits were
+     written, so the UI can say it without counting again. */
+  function applyLimitSuggestions(rows) {
+    var wanted = [];
+    var seen = Object.create(null);
+    (Array.isArray(rows) ? rows : []).forEach(function (row) {
+      if (!row || !row.categoryId) return;
+      var amount = positiveInt(row.suggested);
+      if (!amount) return;
+      var cat = categoryById(row.categoryId);
+      if (!cat || cat.kind === "income") return;
+      /* The same category twice would be written twice and counted twice; the
+         last value the caller passed is the one that would survive anyway. */
+      if (seen[row.categoryId] !== undefined) {
+        wanted[seen[row.categoryId]].amount = amount;
+        return;
+      }
+      seen[row.categoryId] = wanted.length;
+      wanted.push({ categoryId: row.categoryId, amount: amount });
+    });
+    if (!wanted.length) return 0;
+
+    return write("limit:suggest", function (draft) {
+      var limits = bucket(draft, "limits");
+      var categoryRows = bucket(draft, "categories");
+      var applied = 0;
+
+      wanted.forEach(function (row) {
+        /* Same reason setLimit claims: budgeting a sample category makes that
+           category the reader's, or clearing the sample month would take their
+           figure with it through the orphan door. */
+        for (var c = 0; c < categoryRows.length; c += 1) {
+          if (categoryRows[c] && categoryRows[c].id === row.categoryId) {
+            claim(categoryRows[c]);
+            break;
+          }
+        }
+        var found = false;
+        for (var i = 0; i < limits.length; i += 1) {
+          if (!limits[i] || limits[i].categoryId !== row.categoryId) continue;
+          limits[i].amount = row.amount;
+          claim(limits[i]);
+          found = true;
+          break;
+        }
+        if (!found) {
+          limits.push({ id: util.id("l"), categoryId: row.categoryId, amount: row.amount });
+        }
+        applied += 1;
+      });
+
+      return applied;
+    }, { immediate: true }) || 0;
+  }
+
   function addRecurring(draft) {
     if (!validateRecurring(draft).ok) return null;
     var d = draft;
@@ -1426,6 +1847,92 @@
       });
       return count;
     }, { immediate: true }) || 0;
+  }
+
+  /* ---------------------------------------------- recurring detection (2/2) */
+
+  /* Turn one detection into a real rule, in ONE update.
+     The entries that proved the pattern are already in the ledger, so the rule
+     is stamped with the period in progress: generateRecurring reads that stamp
+     as "this period is done" and the rule first produces an entry in the NEXT
+     period. Without the stamp, pressing this button would duplicate every
+     occurrence the reader just looked at.
+     `opts.fixed` moves the occurrences out of the daily-allowance pool.
+     `opts.markCategoryFixed` moves the whole category, and then — by the same
+     rule updateCategory follows — every entry and rule in that category moves
+     with it, because spending is classified by the flag on each record and
+     limits by the flag on the category; splitting the two makes the panel
+     report an overrun that did not happen.
+     Returns `{recurringId, markedFixed}`, where markedFixed counts the entry
+     records whose flag this call actually turned on. */
+  function promoteToRecurring(detection, opts) {
+    var o = opts || {};
+    var det = detection || {};
+    var refused = { recurringId: null, markedFixed: 0 };
+
+    var cat = categoryById(det.categoryId);
+    if (!cat) return refused;
+
+    var occurrences = Array.isArray(det.occurrences) ? det.occurrences : [];
+    var startDate = null;
+    occurrences.forEach(function (row) {
+      if (row && isDate(row.date) && (!startDate || row.date < startDate)) startDate = row.date;
+    });
+    if (!startDate) startDate = todayDate();
+
+    var markCategory = o.markCategoryFixed === true;
+    var fixed = typeof o.fixed === "boolean" ? o.fixed : !!cat.fixed;
+    if (markCategory) fixed = true;
+
+    var record = {
+      id: util.id("r"),
+      name: text(det.name).trim().slice(0, 200) || text(cat.name).trim(),
+      amount: positiveInt(det.amount),
+      direction: det.direction === "in" ? "in" : "out",
+      categoryId: det.categoryId,
+      dayOfMonth: util.clamp(int(det.dayOfMonth) || 1, 1, 31),
+      fixed: fixed,
+      startDate: startDate,
+      endDate: null,
+      active: true,
+      lastGeneratedPeriod: currentPeriodKey(o)
+    };
+    if (!validateRecurring(record).ok) return refused;
+
+    var markIds = Object.create(null);
+    if (o.fixed === true) {
+      occurrences.forEach(function (row) {
+        if (row && row.entryId) markIds[row.entryId] = true;
+      });
+    }
+
+    return write("recurring:promote", function (draft) {
+      bucket(draft, "recurring").push(record);
+
+      var marked = 0;
+      bucket(draft, "entries").forEach(function (e) {
+        if (!e) return;
+        var wanted = markIds[e.id] === true ||
+          (markCategory && e.categoryId === record.categoryId);
+        if (!wanted || e.fixed === true) return;
+        e.fixed = true;
+        marked += 1;
+      });
+
+      if (markCategory) {
+        bucket(draft, "categories").forEach(function (row) {
+          if (row && row.id === record.categoryId) {
+            row.fixed = true;
+            claim(row);
+          }
+        });
+        bucket(draft, "recurring").forEach(function (rule) {
+          if (rule && rule.categoryId === record.categoryId) rule.fixed = true;
+        });
+      }
+
+      return { recurringId: record.id, markedFixed: marked };
+    }, { immediate: true }) || refused;
   }
 
   function addGoal(draft) {
@@ -1602,6 +2109,8 @@
     budgetRows: budgetRows,
     yearGrid: yearGrid,
     pendingRecurring: pendingRecurring,
+    suggestLimits: suggestLimits,
+    detectRecurring: detectRecurring,
     goalProgress: goalProgress,
     debtTotals: debtTotals,
 
@@ -1623,8 +2132,10 @@
     removeCategory: removeCategory,
     rehomeOrphans: rehomeOrphans,
     setLimit: setLimit,
+    applyLimitSuggestions: applyLimitSuggestions,
 
     addRecurring: addRecurring,
+    promoteToRecurring: promoteToRecurring,
     updateRecurring: updateRecurring,
     removeRecurring: removeRecurring,
     toggleRecurring: toggleRecurring,
@@ -1711,6 +2222,10 @@
   function selftest() {
     var failures = [];
     var checks = 0;
+    /* How many times the fixture store was written. The suggestion features
+       promise ONE update per decision, and that promise is only testable if the
+       fixture counts the calls. */
+    var writeCount = 0;
 
     function ok(label, condition) {
       checks += 1;
@@ -1746,7 +2261,10 @@
         Money: { pct: function (part, whole) { return whole ? Math.round((part / whole) * 100) : null; } },
         Store: {
           state: st,
-          update: function (mutator) { mutator(st); }
+          update: function (mutator) {
+            writeCount += 1;
+            mutator(st);
+          }
         },
         I18n: { t: function (key) { return key; }, lang: "tr" }
       };
@@ -2075,6 +2593,242 @@
     ok("defensive.flow", dailyFlow("2026-09").length === 30);
     ok("defensive.cumulative", cumulative("2026-09").points.length > 0);
     ok("defensive.yearGrid", yearGrid("2026-09").periods.length === 12);
+
+    /* ------------------------------------------- 14 — budget suggestions */
+
+    function byCategoryId(rowList) {
+      var map = Object.create(null);
+      rowList.forEach(function (row) { map[row.categoryId] = row; });
+      return map;
+    }
+
+    /* 14a — median, not mean; the rounding step; the period in progress and
+             income categories left out; fixed categories flagged, not hidden. */
+    scene("2026-09-21", {
+      limits: [{ id: "l1", categoryId: "c_groc", amount: 600000 }],
+      entries: [
+        entry("g1", "2026-06-10", 100000, "c_groc"),
+        entry("g2", "2026-07-12", 148700, "c_groc"),
+        entry("g3", "2026-08-14", 900000, "c_groc"),   /* one big month */
+        entry("g4", "2026-09-05", 2000000, "c_groc"),  /* period in progress */
+        entry("r1", "2026-07-01", 1800000, "c_rent"),
+        entry("r2", "2026-08-01", 1800000, "c_rent"),
+        entry("s1", "2026-07-25", 4200000, "c_sal", { direction: "in" }),
+        entry("t1", "2026-06-03", 11000, "c_trans"),
+        entry("t2", "2026-07-03", 12300, "c_trans"),
+        entry("t3", "2026-08-03", 40000, "c_trans"),
+        entry("f1", "2026-08-20", 7700, "c_fun")
+      ]
+    });
+    var suggestion = suggestLimits();
+    var sg = byCategoryId(suggestion.rows);
+    eq("suggest.rowCount", suggestion.rows.length, 4);
+    eq("suggest.basis", suggestion.basis.periods.join(","), "2026-06,2026-07,2026-08");
+    eq("suggest.entryCount", suggestion.basis.entryCount, 9);
+    ok("suggest.complete", suggestion.basis.complete === true);
+    /* median 148.700 → 150.000, where the mean (382.900) would say 390.000 */
+    eq("suggest.median", sg.c_groc.suggested, 150000);
+    eq("suggest.smallStep", sg.c_trans.suggested, 13000);     /* median 12.300 ↑ 10 TL step */
+    eq("suggest.smallStepLow", sg.c_fun.suggested, 8000);     /* 7.700 ↑ 8.000 */
+    eq("suggest.current", sg.c_groc.current, 600000);
+    eq("suggest.noCurrent", sg.c_trans.current, null);
+    ok("suggest.noIncomeRow", suggestion.rows.every(function (row) {
+      return row.categoryId !== "c_sal";
+    }));
+    eq("suggest.fixedFlagged", sg.c_rent.fixed, true);
+    eq("suggest.fixedIncluded", sg.c_rent.suggested, 1800000);
+    eq("suggest.confidenceHigh", sg.c_groc.confidence, "high");
+    eq("suggest.confidenceMedium", sg.c_rent.confidence, "medium");
+    eq("suggest.confidenceLow", sg.c_fun.confidence, "low");
+    eq("suggest.monthsSeen", sg.c_rent.monthsSeen, 2);
+    eq("suggest.perPeriod", sg.c_groc.perPeriod["2026-08"], 900000);
+    ok("suggest.halfPeriodExcluded", sg.c_groc.perPeriod["2026-09"] === undefined);
+    eq("suggest.order", suggestion.rows[0].categoryId, "c_rent");
+    eq("suggest.deterministic",
+      JSON.stringify(suggestLimits()), JSON.stringify(suggestLimits()));
+
+    /* 14b — nothing but the period in progress: no basis, no suggestion. */
+    scene("2026-09-21", { entries: [entry("g1", "2026-09-05", 400000, "c_groc")] });
+    var empty = suggestLimits();
+    eq("suggest.noBasis.rows", empty.rows.length, 0);
+    eq("suggest.noBasis.complete", empty.basis.complete, false);
+    eq("suggest.noBasis.periods", empty.basis.periods.length, 0);
+
+    /* 14c — at most the last six complete periods. */
+    var deep = [];
+    ["2026-01", "2026-02", "2026-03", "2026-04", "2026-05", "2026-06", "2026-07", "2026-08"]
+      .forEach(function (key, index) {
+        deep.push(entry("d" + index, key + "-08", 100000 + index * 1000, "c_groc"));
+      });
+    scene("2026-09-21", { entries: deep });
+    var windowed = suggestLimits();
+    eq("suggest.window", windowed.basis.periods.length, 6);
+    eq("suggest.windowOldest", windowed.basis.periods[0], "2026-03");
+    eq("suggest.windowNewest", windowed.basis.periods[5], "2026-08");
+
+    /* 14d — applying the ticked rows: one write, income refused, last wins. */
+    st = scene("2026-09-21", {
+      limits: [{ id: "l1", categoryId: "c_groc", amount: 600000 }],
+      entries: [
+        entry("g1", "2026-06-10", 100000, "c_groc"),
+        entry("g2", "2026-07-12", 148700, "c_groc"),
+        entry("g3", "2026-08-14", 900000, "c_groc")
+      ]
+    });
+    var picked = suggestLimits().rows;
+    eq("apply.pickedRows", picked.length, 1);
+    writeCount = 0;
+    eq("apply.count", applyLimitSuggestions(picked.concat([
+      { categoryId: "c_sal", suggested: 100 },      /* income: never applied */
+      { categoryId: "c_missing", suggested: 100 },   /* no such category */
+      { categoryId: "c_fun", suggested: 25000 },
+      { categoryId: "c_fun", suggested: 30000 }      /* same category twice */
+    ])), 2);
+    eq("apply.singleWrite", writeCount, 1);
+
+    function limitOf(categoryId) {
+      var found = null;
+      st.limits.forEach(function (row) { if (row.categoryId === categoryId) found = row.amount; });
+      return found;
+    }
+    eq("apply.replaced", limitOf("c_groc"), 150000);
+    eq("apply.lastWins", limitOf("c_fun"), 30000);
+    eq("apply.incomeSkipped", limitOf("c_sal"), null);
+    eq("apply.limitCount", st.limits.length, 2);
+    eq("apply.emptyInput", applyLimitSuggestions([]), 0);
+    eq("apply.emptyNoWrite", writeCount, 1);
+
+    /* --------------------------------------- 15 — recurring detection */
+
+    function byDetectionKey(rowList) {
+      var map = Object.create(null);
+      rowList.forEach(function (row) { map[row.key] = row; });
+      return map;
+    }
+
+    scene("2026-09-21", {
+      entries: [
+        entry("s1", "2026-07-15", 6999, "c_fun", { note: "Spotify" }),
+        entry("s2", "2026-08-15", 6999, "c_fun", { note: "Spotify" }),
+        entry("s3", "2026-09-15", 6999, "c_fun", { note: "Spotify" }),
+        /* two coffees inside ONE period are a week, not a subscription */
+        entry("k1", "2026-08-03", 5000, "c_groc", { note: "Kahve" }),
+        entry("k2", "2026-08-20", 5000, "c_groc", { note: "Kahve" }),
+        /* income repeats too */
+        entry("m1", "2026-07-25", 4200000, "c_sal", { note: "Maas", direction: "in" }),
+        entry("m2", "2026-08-25", 4200000, "c_sal", { note: "Maas", direction: "in" }),
+        /* 10.000 vs 13.000: inside the 25% grouping band, past the 10% variance */
+        entry("v1", "2026-07-10", 10000, "c_trans", { note: "Elektrik" }),
+        entry("v2", "2026-08-10", 13000, "c_trans", { note: "Elektrik" }),
+        entry("i1", "2026-07-18", 10000, "c_trans", { note: "Fiber" }),
+        entry("i2", "2026-08-18", 10500, "c_trans", { note: "Fiber" }),
+        /* the third one is ten times the median: dropped, not averaged in */
+        entry("o1", "2026-06-05", 10000, "c_groc", { note: "Market haftalik" }),
+        entry("o2", "2026-07-05", 10000, "c_groc", { note: "Market haftalik" }),
+        entry("o3", "2026-08-05", 100000, "c_groc", { note: "Market haftalik" }),
+        /* no note: no stable identity, no suggestion */
+        entry("n1", "2026-07-07", 3000, "c_groc", { note: "" }),
+        entry("n2", "2026-08-07", 3000, "c_groc", { note: "" }),
+        /* a category that no longer exists cannot carry a rule */
+        entry("x1", "2026-07-09", 4000, "c_missing", { note: "Hayalet" }),
+        entry("x2", "2026-08-09", 4000, "c_missing", { note: "Hayalet" })
+      ]
+    });
+    var detected = detectRecurring();
+    var dk = byDetectionKey(detected);
+    eq("detect.count", detected.length, 5);
+    eq("detect.order", detected[0].key, "c_fun|out|spotify");
+    eq("detect.periods", dk["c_fun|out|spotify"].periods.join(","),
+      "2026-07,2026-08,2026-09");
+    eq("detect.amount", dk["c_fun|out|spotify"].amount, 6999);
+    eq("detect.dayOfMonth", dk["c_fun|out|spotify"].dayOfMonth, 15);
+    eq("detect.name", dk["c_fun|out|spotify"].name, "Spotify");
+    eq("detect.steady", dk["c_fun|out|spotify"].amountVaries, false);
+    eq("detect.occurrences", dk["c_fun|out|spotify"].occurrences.length, 3);
+    eq("detect.noRuleYet", dk["c_fun|out|spotify"].existingRuleId, null);
+    eq("detect.notFixed", dk["c_fun|out|spotify"].alreadyFixed, false);
+    ok("detect.sameMonthIgnored", dk["c_groc|out|kahve"] === undefined);
+    ok("detect.noteless", detected.every(function (row) { return !!row.name; }));
+    ok("detect.unknownCategory", detected.every(function (row) {
+      return row.categoryId !== "c_missing";
+    }));
+    eq("detect.income", dk["c_sal|in|maas"].direction, "in");
+    eq("detect.incomeAmount", dk["c_sal|in|maas"].amount, 4200000);
+    eq("detect.varies", dk["c_trans|out|elektrik"].amountVaries, true);
+    eq("detect.variesAmount", dk["c_trans|out|elektrik"].amount, 11500);
+    eq("detect.withinVariance", dk["c_trans|out|fiber"].amountVaries, false);
+    eq("detect.outlierDropped", dk["c_groc|out|markethaftalik"].occurrences.length, 2);
+    eq("detect.outlierMedian", dk["c_groc|out|markethaftalik"].amount, 10000);
+    eq("detect.deterministic",
+      JSON.stringify(detectRecurring()), JSON.stringify(detectRecurring()));
+
+    /* 15b — a payment that already has a rule is reported, flagged, so the UI
+             can hide it instead of offering a second copy. */
+    scene("2026-09-21", {
+      recurring: [{ id: "r1", name: "Spotify", amount: 6999, direction: "out",
+        categoryId: "c_fun", dayOfMonth: 15, fixed: false, startDate: "2026-01-15",
+        endDate: null, active: true, lastGeneratedPeriod: "2026-09" }],
+      entries: [
+        entry("s1", "2026-07-15", 6999, "c_fun", { note: "Spotify" }),
+        entry("s2", "2026-08-15", 6999, "c_fun", { note: "Spotify" })
+      ]
+    });
+    eq("detect.existingRule", detectRecurring()[0].existingRuleId, "r1");
+
+    /* 15c — promotion writes no history: the occurrences are already here. */
+    st = scene("2026-09-21", {
+      entries: [
+        entry("s1", "2026-07-15", 6999, "c_fun", { note: "Spotify" }),
+        entry("s2", "2026-08-15", 6999, "c_fun", { note: "Spotify" }),
+        entry("s3", "2026-09-15", 6999, "c_fun", { note: "Spotify" })
+      ]
+    });
+    var found = detectRecurring()[0];
+    writeCount = 0;
+    var promoted = promoteToRecurring(found, { fixed: true });
+    ok("promote.id", !!promoted.recurringId);
+    eq("promote.singleWrite", writeCount, 1);
+    eq("promote.markedFixed", promoted.markedFixed, 3);
+    eq("promote.ruleCount", st.recurring.length, 1);
+    eq("promote.stamp", st.recurring[0].lastGeneratedPeriod, "2026-09");
+    eq("promote.startDate", st.recurring[0].startDate, "2026-07-15");
+    eq("promote.dayOfMonth", st.recurring[0].dayOfMonth, 15);
+    eq("promote.ruleFixed", st.recurring[0].fixed, true);
+    eq("promote.noBackfill", generateRecurring("2026-09"), 0);
+    eq("promote.entriesUntouched", st.entries.length, 3);
+    ok("promote.occurrencesFixed", st.entries.every(function (e) { return e.fixed === true; }));
+    /* but the rule does work from the next period on */
+    eq("promote.nextPeriod", generateRecurring("2026-10"), 1);
+    eq("promote.nextDate", st.entries[3].date, "2026-10-15");
+
+    /* 15d — marking the category fixed carries its records across. */
+    st = scene("2026-09-21", {
+      entries: [
+        entry("s1", "2026-07-15", 6999, "c_fun", { note: "Spotify" }),
+        entry("s2", "2026-08-15", 6999, "c_fun", { note: "Spotify" }),
+        entry("p1", "2026-08-02", 12000, "c_fun", { note: "Sinema" })
+      ]
+    });
+    var marked = promoteToRecurring(detectRecurring()[0], { markCategoryFixed: true });
+    eq("promote.categoryCarries", marked.markedFixed, 3);
+    ok("promote.categoryFixed", st.categories.some(function (cat) {
+      return cat.id === "c_fun" && cat.fixed === true;
+    }));
+    ok("promote.allFixed", st.entries.every(function (e) { return e.fixed === true; }));
+    eq("promote.ruleFollowsCategory", st.recurring[0].fixed, true);
+
+    /* 15e — a detection that cannot become a rule is refused, not guessed. */
+    st = scene("2026-09-21", {});
+    writeCount = 0;
+    eq("promote.noDetection", promoteToRecurring(null, {}).recurringId, null);
+    eq("promote.badCategory",
+      promoteToRecurring({ categoryId: "c_missing", name: "X", amount: 100,
+        direction: "out", dayOfMonth: 5, occurrences: [] }, {}).recurringId, null);
+    eq("promote.zeroAmount",
+      promoteToRecurring({ categoryId: "c_fun", name: "X", amount: 0,
+        direction: "out", dayOfMonth: 5, occurrences: [] }, {}).recurringId, null);
+    eq("promote.refusedNoWrite", writeCount, 0);
+    eq("promote.refusedRuleCount", st.recurring.length, 0);
 
     fixtures = null;
 

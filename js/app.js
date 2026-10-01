@@ -51,22 +51,37 @@
   var DATA_HASH = "veri";
 
   var CURRENCIES = ["TRY", "USD", "EUR", "GBP"];
-  /* Cycle order, jury G8: System -> Dial -> Paper -> System, written as the
-     material's name, never an icon. */
-  var THEMES = ["system", "dial", "paper"];
+
+  /* Moon's ground language. I18n guesses from the browser, which on a Turkish
+     machine lands on Turkish; the product has one main language and it is this
+     one. Only a stored preference overrules it (see seedLang). */
+  var DEFAULT_LANG = "en";
+
+  /* Cycle order, jury G8: System -> Dial -> Paper -> Prism -> System, written
+     as the material's name, never an icon. */
+  var THEMES = ["system", "dial", "paper", "prism"];
+
+  /* The three materials that pin themselves on <html data-theme>. "system" is
+     the ABSENCE of the attribute, which is why it is not here. */
+  var SURFACES = { dial: 1, paper: 1, prism: 1 };
 
   /* The media query each theme-color meta in index.html carries while the
      reader is on "system". Keyed by the surface, not by the colour: the hexes
      live in index.html next to the tokens they mirror and are never touched
-     from here. */
+     from here. Prism answers no system preference — nothing asks a machine for
+     a colourful surface — so on "system" its tag stays switched off. */
   var SURFACE_MEDIA = {
     dial: "(prefers-color-scheme: dark)",
-    paper: "(prefers-color-scheme: light)"
+    paper: "(prefers-color-scheme: light)",
+    prism: "not all"
   };
 
   var PERIOD_RE = /^\d{4}-\d{2}$/;
   var NUDGE_AT = 40;          /* contract §14 step 8 */
   var ADAPT_MAX = 1400;       /* ms — belt for an animationend that never comes */
+  /* ms — mirrors --dur-theme in css/tokens.css, plus a few frames so the class
+     outlives the last one. The two numbers are a pair; change them together. */
+  var THEME_FADE = 320 + 60;
   var ANNOUNCE_MS = 2500;     /* how long a screen-reader line stays in #strip */
   /* ms — Store debounces a write by 250 and then hands it to an idle callback
      with a 1000ms timeout, so a state change arrives well before the attempt
@@ -94,6 +109,7 @@
 
   var ctl = null;             /* header control references, built once */
   var periodAccessor = false; /* false on an engine that refused the getter */
+  var themingTimer = null;    /* the open colour-transition window, if any */
 
   /* ---------------------------------------------------------------- plumbing */
 
@@ -151,6 +167,29 @@
     if (!node || !node.classList) return;
     if (on) node.classList.add(name);
     else node.classList.remove(name);
+  }
+
+  function reducedMotion() {
+    return safe(function () {
+      return !!(global.matchMedia && global.matchMedia("(prefers-reduced-motion: reduce)").matches);
+    }, false);
+  }
+
+  /* The one storage key, read raw, exactly as the pre-paint script in
+     index.html reads it and for the same reason: two questions have to be
+     answered BEFORE Store.boot() — which language a fresh install seeds its
+     category names in, and which surface the reader last pinned — and after
+     boot the raw answers are out of reach. Store owns the real parsing; this
+     never writes and never throws. */
+  function storedSettings() {
+    return safe(function () {
+      var key = (Moon.Store && Moon.Store.KEY) || "moon.v1";
+      var raw = global.localStorage ? global.localStorage.getItem(key) : null;
+      if (!raw) return null;
+      var parsed = JSON.parse(raw);
+      var found = parsed ? parsed.settings : null;
+      return found && typeof found === "object" ? found : null;
+    }, null);
   }
 
   /* The one live region in the app is #strip (contract §16), so a route or
@@ -217,9 +256,34 @@
     if (next) setPeriod(next);
   }
 
+  /* The sample month may sit in the last complete period, because this one was
+     only days old when it was written. Landing on today would then open a page
+     with two entries on it and nothing to read, which is exactly what the
+     sample exists to avoid. Only the opening period is chosen this way, only
+     while the sample is on, and only until the reader moves the selector. */
+  function openingPeriod() {
+    var now = todayPeriod();
+    var state = Moon.Store && Moon.Store.state;
+    if (!state || !state.settings || !state.settings.sampleOn) return now;
+
+    var sample = safe(function () {
+      return Moon.Sample && Moon.Sample.period ? Moon.Sample.period() : null;
+    }, null);
+    if (!sample || sample === now) return now;
+
+    var counted = { here: 0, there: 0 };
+    (Array.isArray(state.entries) ? state.entries : []).forEach(function (entry) {
+      if (!entry || typeof entry.date !== "string") return;
+      var key = entry.date.slice(0, 7);
+      if (key === now) counted.here += 1;
+      else if (key === sample) counted.there += 1;
+    });
+    return counted.there > counted.here ? sample : now;
+  }
+
   function trackToday() {
     if (periodPinned && period) return;
-    var now = todayPeriod();
+    var now = openingPeriod();
     if (now && now !== period) period = now;
     else if (!period) period = now;
     publishPeriod();
@@ -251,6 +315,58 @@
     return THEMES.indexOf(value) === -1 ? "system" : value;
   }
 
+  function isSurface(theme) {
+    return Object.prototype.hasOwnProperty.call(SURFACES, String(theme));
+  }
+
+  function nextTheme(theme) {
+    var index = THEMES.indexOf(theme);
+    return THEMES[(index === -1 ? 0 : index + 1) % THEMES.length];
+  }
+
+  /* Which language a fresh install should be seeded in, or null when the reader
+     already has a preference and nothing should be touched. */
+  function seedsLang(stored) {
+    if (stored && (stored.lang === "tr" || stored.lang === "en")) return null;
+    return DEFAULT_LANG;
+  }
+
+  /* js/store.js validates settings.theme against two surfaces and silently
+     normalises anything else to "system" as it reads the file, so the reader who
+     picked Prism would be handed System back on the next load. The pick is still
+     in the stored bytes — index.html reads them before first paint and paints
+     Prism — so the shell recovers it here and writes it back, keeping the
+     attribute, the header button and the stored settings on one story. Returns
+     the theme to restore, or null when there is nothing to do. Delete this once
+     store.js knows the third material. */
+  function recoverableTheme(stored, active) {
+    if (!stored) return null;
+    var want = stored.theme;
+    if (THEMES.indexOf(want) === -1) return null;
+    return want === active ? null : want;
+  }
+
+  /* A theme change is the one colour change worth following with the eye:
+     .theming opens a --dur-theme window in which moon.css lets the colour
+     properties transition (named one by one, never `all`), and it comes
+     straight back off so no later redraw animates. A reader who asked for less
+     motion never gets the class.
+
+     A timer, not transitionend: <html> itself is not guaranteed to transition
+     any property, and a descendant's event would close the window for every
+     other node too. One duration drives all of them, so one timer is honest. */
+  function fadeTheme() {
+    var html = doc.documentElement;
+    if (!html || !html.classList || reducedMotion()) return;
+
+    if (themingTimer) global.clearTimeout(themingTimer);
+    html.classList.add("theming");
+    themingTimer = global.setTimeout(function () {
+      themingTimer = null;
+      setClass(html, "theming", false);
+    }, THEME_FADE);
+  }
+
   /* On a phone the address bar is part of the page, so it has to follow the
      surface too. index.html ships one theme-color meta per surface behind its
      own media query, which covers "system" on its own and before any script
@@ -261,7 +377,7 @@
   function syncThemeColor(theme) {
     safe(function () {
       var metas = doc.querySelectorAll('meta[name="theme-color"][data-surface]');
-      var pinned = theme === "dial" || theme === "paper";
+      var pinned = isSurface(theme);
       for (var i = 0; i < metas.length; i += 1) {
         var surface = metas[i].getAttribute("data-surface");
         if (pinned) metas[i].setAttribute("media", surface === theme ? "all" : "not all");
@@ -271,12 +387,15 @@
   }
 
   /* "system" REMOVES the attribute rather than writing it: the page then follows
-     prefers-color-scheme, which is what tokens.css is built around. */
-  function applyTheme(theme) {
+     prefers-color-scheme, which is what tokens.css is built around.
+     `animate` opens the colour window first, so the attribute swap below is
+     already inside it — at boot there is nothing to fade from. */
+  function applyTheme(theme, animate) {
+    if (animate) fadeTheme();
     safe(function () {
       var html = doc.documentElement;
       if (!html) return;
-      if (theme === "dial" || theme === "paper") html.setAttribute("data-theme", theme);
+      if (isSurface(theme)) html.setAttribute("data-theme", theme);
       else html.removeAttribute("data-theme");
     });
     syncThemeColor(theme);
@@ -286,10 +405,8 @@
   }
 
   function cycleTheme() {
-    var now = currentTheme();
-    var index = THEMES.indexOf(now);
-    var next = THEMES[(index === -1 ? 0 : index + 1) % THEMES.length];
-    applyTheme(next);
+    var next = nextTheme(currentTheme());
+    applyTheme(next, true);
     if (ctl && ctl.theme) ctl.theme.textContent = t("common.theme." + next);
     writeSetting({ theme: next }, "settings:theme");
   }
@@ -836,10 +953,7 @@
     if (adaptRun) return;
     adaptRun = true;
 
-    var reduce = safe(function () {
-      return !!(global.matchMedia && global.matchMedia("(prefers-reduced-motion: reduce)").matches);
-    }, false);
-    if (reduce) return;
+    if (reducedMotion()) return;
 
     var html = doc.documentElement;
     if (!html || !html.classList) return;
@@ -899,6 +1013,21 @@
     return result;
   }
 
+  /* Runs BEFORE Store.boot(). A fresh install names its thirteen seed
+     categories in whatever language is active at that moment, as plain text
+     that deliberately never follows a later switch (contract §6.1) — so the
+     ground language has to be in place before those names are written, not
+     after. With a stored preference nothing is set here: applyLang() reads it
+     once the store is up. Store is not booted yet, so setLang finds no state to
+     write to and only moves this session's language. */
+  function seedLang(stored) {
+    var I18n = Moon.I18n;
+    if (!I18n || typeof I18n.setLang !== "function") return;
+    var want = seedsLang(stored);
+    if (!want) return;
+    safe(function () { I18n.setLang(want); });
+  }
+
   function applyLang() {
     var I18n = Moon.I18n;
     if (!I18n || typeof I18n.setLang !== "function") return;
@@ -920,6 +1049,17 @@
       relabel();
       schedule();
     });
+    /* The Data section carries its own theme select and emits the same event,
+       so the address-bar colour and the fade answer the event rather than the
+       click: one path for both controls. applyTheme's own emit lands here too
+       and is idempotent — and the one at boot is raised before this
+       subscription exists, which is exactly why the first paint does not fade. */
+    bus.on("theme:change", function (payload) {
+      var theme = payload ? payload.theme : null;
+      if (THEMES.indexOf(theme) === -1) return;
+      syncThemeColor(theme);
+      fadeTheme();
+    });
   }
 
   function fatal(error) {
@@ -937,8 +1077,16 @@
     booted = true;
 
     try {
+      /* Read the raw settings first: boot order is the whole point here. The
+         language has to be chosen before the store seeds a fresh install, and
+         the surface the reader pinned has to be recovered after it. */
+      var stored = storedSettings();
+      seedLang(stored);
       bootStore();
       applyLang();
+
+      var recovered = recoverableTheme(stored, currentTheme());
+      if (recovered) writeSetting({ theme: recovered }, "settings:theme");
       applyTheme(currentTheme());
 
       /* Step 4 of the contract is deliberately absent: generateRecurring is
@@ -946,7 +1094,7 @@
          so the panel counts pendingRecurring and the reader presses the
          button. Nothing is written on someone's behalf at boot. */
 
-      period = todayPeriod();
+      period = openingPeriod();
       publishPeriod();
 
       buildControls();
@@ -971,6 +1119,58 @@
 
   /* --------------------------------------------------------------------- api */
 
+  /* The decisions the shell makes before anything is on screen — which language
+     a fresh install is seeded in, how the theme cycle turns, which surface
+     survives a reload — are pure functions, so they can be proved without a
+     browser. Same report shape as the other modules. */
+  function selftest() {
+    var failed = [];
+    var passed = 0;
+
+    function check(name, got, want) {
+      if (got === want) passed += 1;
+      else failed.push(name + ": got " + JSON.stringify(got) + ", want " + JSON.stringify(want));
+    }
+
+    /* 1 — English is the ground language, and only a stored pick overrules it */
+    check("ground language", DEFAULT_LANG, "en");
+    check("no stored settings seeds en", seedsLang(null), "en");
+    check("empty settings seed en", seedsLang({}), "en");
+    check("unknown stored language seeds en", seedsLang({ lang: "de" }), "en");
+    check("stored tr wins", seedsLang({ lang: "tr" }), null);
+    check("stored en is left alone", seedsLang({ lang: "en" }), null);
+
+    /* 2 — the cycle gained a fourth stop and still closes */
+    check("cycle 1", nextTheme("system"), "dial");
+    check("cycle 2", nextTheme("dial"), "paper");
+    check("cycle 3", nextTheme("paper"), "prism");
+    check("cycle 4", nextTheme("prism"), "system");
+    check("cycle from nonsense", nextTheme("chrome"), "system");
+    check("four stops", THEMES.length, 4);
+
+    /* 3 — prism pins an attribute and owns a theme-color tag */
+    check("prism is a surface", isSurface("prism"), true);
+    check("dial is a surface", isSurface("dial"), true);
+    check("paper is a surface", isSurface("paper"), true);
+    check("system pins nothing", isSurface("system"), false);
+    check("prism answers no system query", SURFACE_MEDIA.prism, "not all");
+    Object.keys(SURFACES).forEach(function (name) {
+      check("media for " + name, typeof SURFACE_MEDIA[name], "string");
+    });
+
+    /* 4 — a pinned surface the store dropped is recovered, once */
+    check("prism recovered", recoverableTheme({ theme: "prism" }, "system"), "prism");
+    check("prism already on", recoverableTheme({ theme: "prism" }, "prism"), null);
+    check("paper needs no rescue", recoverableTheme({ theme: "paper" }, "paper"), null);
+    check("junk is not a theme", recoverableTheme({ theme: "neon" }, "system"), null);
+    check("nothing stored", recoverableTheme(null, "system"), null);
+
+    /* 5 — the fade window is a real one and matches the stylesheet */
+    check("fade outlives --dur-theme", THEME_FADE > 320, true);
+
+    return { ok: failed.length === 0, passed: passed, failed: failed };
+  }
+
   var App = {
     boot: boot,
     setPeriod: setPeriod,
@@ -978,7 +1178,8 @@
     render: function () {
       if (route) safe(function () { mount(route); });
       return App;
-    }
+    },
+    _selftest: selftest
   };
 
   /* A read-only property, per the contract: views read Moon.App.period and

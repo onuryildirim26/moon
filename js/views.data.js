@@ -57,7 +57,7 @@
   ];
 
   var CURRENCIES = ["TRY", "USD", "EUR", "GBP"];
-  var THEMES = ["system", "dial", "paper"];
+  var THEMES = ["system", "dial", "paper", "prism"];
 
   /* ------------------------------------------------------------- module state */
 
@@ -1639,7 +1639,9 @@
   function applyTheme(theme) {
     try {
       var html = doc.documentElement;
-      if (theme === "dial" || theme === "paper") html.setAttribute("data-theme", theme);
+      if (theme === "dial" || theme === "paper" || theme === "prism") {
+        html.setAttribute("data-theme", theme);
+      }
       else html.removeAttribute("data-theme");
     } catch (error) { /* no documentElement: the setting is still stored */ }
     if (Moon.bus && typeof Moon.bus.emit === "function") {
@@ -1689,7 +1691,8 @@
       options: [
         { value: "system", labelKey: "common.theme.system" },
         { value: "dial", labelKey: "common.theme.dial" },
-        { value: "paper", labelKey: "common.theme.paper" }
+        { value: "paper", labelKey: "common.theme.paper" },
+        { value: "prism", labelKey: "common.theme.prism" }
       ],
       onChange: function (value) {
         if (THEMES.indexOf(value) === -1) return;

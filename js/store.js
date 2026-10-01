@@ -263,7 +263,10 @@
     { key: "cat.otherIncome", kind: "income", fixed: false }
   ];
 
-  var THEMES = { system: 1, dial: 1, paper: 1 };
+  /* "prism" is the third surface. A theme this list does not know is quietly
+     downgraded to "system" on read, so leaving it out would lose the reader's
+     choice every time they came back. */
+  var THEMES = { system: 1, dial: 1, paper: 1, prism: 1 };
   var CURRENCIES = { TRY: 1, USD: 1, EUR: 1, GBP: 1 };
   var SOURCES = { manual: 1, csv: 1, recurring: 1, sample: 1 };
 
@@ -1678,9 +1681,15 @@
           draft.entries.push({ id: "e_dup", date: "2026-09-01", amount: 100, direction: "out", categoryId: "c_local" });
         }, { immediate: true });
         var before = state.categories.length;
+        /* Settings the install does not have, so "merge leaves settings alone"
+           is provable whichever language the install defaults to. */
+        var settingsBefore = {
+          lang: state.settings.lang,
+          currency: state.settings.currency
+        };
         var foreign = JSON.stringify({
           schemaVersion: 1,
-          settings: { lang: "en" },
+          settings: { lang: "zz", currency: "EUR" },
           categories: [
             { id: "c_foreign", name: "  MARKET  ", kind: "expense" },
             { id: "c_new", name: "Kitaplar", kind: "expense" }
@@ -1701,7 +1710,9 @@
           return e.id === "e_fresh";
         })[0];
         assert(remapped.categoryId === "c_local", "the folded category id must be remapped");
-        assert(state.settings.lang !== "en", "merge must not overwrite settings");
+        assert(state.settings.lang === settingsBefore.lang &&
+          state.settings.currency === settingsBefore.currency,
+          "merge must not overwrite settings");
       });
 
       /* 14 — a bad file changes nothing */

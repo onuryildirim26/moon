@@ -69,6 +69,7 @@
   /* --- motion ---------------------------------------------------------- */
   --dur-fast: 120ms;
   --dur-adapt: 600ms;      /* the one orchestrated moment: dark adaptation  */
+  --dur-theme: 320ms;      /* colour tokens easing from one theme to the next */
   --ease: cubic-bezier(0.2, 0, 0.3, 1);
 }
 
@@ -133,6 +134,52 @@
   --focus: #ffc978;
 }
 
+/* The third material: "Prism". A violet ground with four saturated data inks,
+ * for the reader who asked for colour. It is a surface, not a mood: every token
+ * below is measured, and the ladder is deliberate.
+ *
+ * Contrast against the ground (--bg #120c24) and against the plate (--plate
+ * #1d1540), computed with WCAG 2.1 relative luminance:
+ *
+ *   token         vs --bg   vs --plate   used for
+ *   --ink         16.64      14.89       body text and every numeral
+ *   --ink-dim      9.11       8.15       dates, ticks, cents, help
+ *   --dial         8.11       7.26       expense marks, 15px amounts, CTA bg
+ *   --gauge       12.24      10.95       income marks and amounts
+ *   --over         5.55       4.97       the overrun mark and its reading
+ *   --warn        16.56      14.82       a limit near its edge
+ *   --flare       19.03      17.02       the opt-in overrun mark
+ *   --focus       13.19      11.81       the ring
+ *
+ * Body text needs 4.5:1 and large text 3:1, so the tightest of these (--over on
+ * the plate, 4.97) still clears the stricter bar. --dial also carries the
+ * primary button, where --bg is painted ON it: that reading is 8.11.
+ *
+ * The four data inks have to be told apart by more than hue, so they are spaced
+ * on a luminance ladder — over 26%, dial 40%, gauge 63%, warn 86% — which keeps
+ * every pair at 1.31:1 or more, and at 1.23:1 or more after simulating
+ * deuteranopia and protanopia. A reader who sees no colour at all still reads
+ * four different greys.
+ */
+:root[data-theme="prism"] {
+  color-scheme: dark;
+
+  --bg: #120c24;
+  --plate: #1d1540;
+  --rule: #3a2d6e;
+  --rule-strong: #5d4ba6;
+
+  --ink: #f3edff;
+  --ink-dim: #b9abe8;
+
+  --dial: #ff8a3c;
+  --gauge: #7adcff;
+  --over: #fb4273;
+  --flare: #ffffff;
+  --warn: #fff0a8;
+  --focus: #ffd166;
+}
+
 /* Readers who ask for more contrast get stronger rules and brighter dim ink.
    The light values must stay scoped to a light surface: `:not([data-theme="dial"])`
    alone also matches the default dark page, and being more specific than `:root`
@@ -166,11 +213,21 @@
     --rule-strong: #566a76;
     --ink-dim: #aab8c2;
   }
+
+  /* Prism is a dark surface too, so its rules brighten rather than darken.
+     The data inks are left alone: they already clear 4.5:1 and pushing them
+     further would collapse the luminance ladder they are spaced on. */
+  :root[data-theme="prism"] {
+    --rule: #52429a;
+    --rule-strong: #7e6bca;
+    --ink-dim: #d4caf7;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
   :root {
     --dur-fast: 0ms;
     --dur-adapt: 0ms;
+    --dur-theme: 0ms;
   }
 }
