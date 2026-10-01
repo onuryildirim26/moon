@@ -666,6 +666,22 @@
 
     /* ----------------------------------------------------------- form ---- */
 
+    "quick.open": "Add an expense",
+    "quick.title": "New expense",
+    "quick.title.income": "New income",
+    "quick.kind.out": "Expense",
+    "quick.kind.in": "Income",
+    "quick.pickDate": "Another day",
+    "quick.note": "Add a note",
+    "quick.chooseCategory": "Choose a category",
+    "quick.recent": "What you used last",
+    "quick.all": "All",
+    "quick.saved": "{amount} written under {category}.",
+    "quick.empty": "There is no category to write under yet. Add one in Limits and come back.",
+    "quick.hint": "Type the amount, then tap a category. The tap is what saves it.",
+    "a11y.keypad": "Number keys",
+    "a11y.backspace": "Delete the last digit",
+    "a11y.amountNow": "Amount so far: {amount}",
     "form.date": "Date",
     "form.amount": "Amount",
     "form.amount.hint": "A comma or a dot both work.",

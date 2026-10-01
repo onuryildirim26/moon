@@ -844,7 +844,7 @@ test("the browser stand-in is node-shaped enough for ui.js to build into", () =>
     "UI.section stringified its body instead of appending it");
 });
 
-for (const name of ["Charts", "UI", "Sample"]) {
+for (const name of ["Charts", "UI", "Sample", "QuickAdd"]) {
   test(`Moon.${name}._selftest() passes`, () => {
     const Moon = loadAll({ today: "2026-09-15" }).Moon;
     const module = Moon[name];
@@ -860,7 +860,7 @@ for (const name of ["Charts", "UI", "Sample"]) {
 
 test("the suites together still cover a few hundred checks", () => {
   const Moon = loadAll({ today: "2026-09-15" }).Moon;
-  const names = ["Money", "Dates", "Store", "Model", "CSV", "Importer", "Charts", "UI", "Sample"];
+  const names = ["Money", "Dates", "Store", "Model", "CSV", "Importer", "Charts", "UI", "Sample", "QuickAdd"];
 
   const total = names.reduce((sum, name) => {
     const module = Moon[name];

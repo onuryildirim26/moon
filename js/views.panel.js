@@ -1345,36 +1345,12 @@
     periodRatio: 0
   };
 
-  /* Set when a row has just been written: the next render hands the caret back
-     to the amount field, so a run of entries never needs the mouse — and marks
-     the hero figure, which is the number the entry just changed. The mark is
-     read once and cleared, so a redraw for any other reason is still. */
-  var focusAmountNext = false;
+  /* Raised by whoever just wrote an entry, so the next render marks the hero
+     figure — the number that entry changed. Writing raises state:change and the
+     router answers it on the next tick, so marking at the moment of the write
+     would only be undone; the flag asks whoever draws next to do it instead.
+     Read once and cleared, so a redraw for any other reason is still. */
   var settleHero = false;
-
-  /* Both of these come from the sections that own them. The panel composes;
-     it does not keep a second copy of how an entry is written or how a limit is
-     pulled, because a second copy is a thing that drifts. */
-  function entryRow(root) {
-    var ledger = Moon.Views && Moon.Views.ledger;
-    if (!ledger || typeof ledger.quickEntry !== "function") return null;
-
-    var api = safe(function () {
-      return ledger.quickEntry({
-        memoryKey: "panel.quick",
-        onSaved: function () {
-          /* Writing raises state:change and the router answers it on the next
-             tick, so drawing here would only be undone a moment later — and
-             with it the caret. Ask instead: whoever draws next puts the caret
-             back where the following amount goes. */
-          focusAmountNext = true;
-          settleHero = true;
-        }
-      });
-    }, null);
-
-    return api && api.element ? api.element : null;
-  }
 
   function scaleRows(max) {
     var limits = Moon.Views && Moon.Views.limits;
@@ -1411,11 +1387,12 @@
     root.appendChild(heroStrip(periodKey, allowance, summary, progress, worth.phase));
     markSettled(root);
 
-    /* Writing something down is the thing done most often, so it belongs on the
-       screen that opens, under the number it changes. The row is the ledger's
-       own — same fields, same submit path — so the two cannot drift apart. */
-    var entry = entryRow(root);
-    if (entry) root.appendChild(entry);
+    /* The six-field row that used to sit here is gone. Writing something down is
+       still the thing done most often, which is why it moved to the button that
+       is on every screen: tap, type the amount, tap a category, done. The row
+       cost 219px of a 640px phone to say what two taps now say, and the owner's
+       word for it was "teferruat". The detailed row still exists in the ledger,
+       for the day someone wants a note and a date and a direction on one line. */
 
     var pending = safe(function () { return Moon.Model.pendingRecurring(periodKey); }, []) || [];
     if (pending.length) root.appendChild(pendingBand(periodKey, pending));
@@ -1433,7 +1410,6 @@
     root.appendChild(flowSection(periodKey));
     root.appendChild(cumulativeSection(periodKey));
     applyCssHooks(root);
-    restoreCaret(root);
   }
 
   /* The figure the entry just moved, redrawn in front of the reader. One mark,
@@ -1448,15 +1424,6 @@
     });
   }
 
-  function restoreCaret(root) {
-    if (!focusAmountNext) return;
-    focusAmountNext = false;
-    var field = root.querySelector('.quickrow [name="amount"]');
-    if (!field || typeof field.focus !== "function") return;
-    field.focus();
-    if (typeof field.select === "function") safe(function () { field.select(); }, null);
-  }
-
   function destroy() {
     if (dragTimer) {
       global.clearTimeout(dragTimer);
@@ -1469,6 +1436,11 @@
     id: "panel",
     titleKey: "nav.panel",
     render: render,
-    destroy: destroy
+    destroy: destroy,
+    /* Called by whoever writes an entry from outside this file -- the quick
+       sheet does -- so the hero figure is marked on the redraw that follows.
+       Without it the number the entry just changed would simply be different
+       the next time the reader looked, with nothing saying it moved. */
+    markWrite: function () { settleHero = true; }
   };
 })(window);

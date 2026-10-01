@@ -111,6 +111,15 @@
   <main class="view" id="view" tabindex="-1"></main>
 </div>
 
+<!-- The one control that is on every screen. Writing an expense down is the
+     thing done most often, so it is never more than one tap away, and it sits
+     where a thumb already is. app.js fills its label from the catalogue. -->
+<button class="fab" id="fab" type="button" data-i18n-label="quick.open" aria-label="Add an expense">
+  <svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true" focusable="false">
+    <path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round"/>
+  </svg>
+</button>
+
 <!-- The one live region in the app: undo strips and write warnings land here.
      Nothing ever pops out of a corner. -->
 <div class="strip" id="strip" role="status" aria-live="polite"></div>
@@ -145,6 +154,7 @@
 <script src="js/views.accounts.js"></script>
 <script src="js/views.investments.js"></script>
 <script src="js/views.data.js"></script>
+<script src="js/quickadd.js"></script>
 <script src="js/app.js"></script>
 </body>
 </html>

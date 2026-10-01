@@ -3453,3 +3453,259 @@ input[type="radio"] {
     break-after: avoid;
   }
 }
+
+/* ------------------------------------------------------------ quick entry
+   The five-tap path: open, type, tap a category, done. Measurements follow
+   the pattern every widely used tracker has settled on — the amount is the
+   biggest thing on the screen by roughly three times, the keypad is ours
+   rather than the phone's, and the category grid is the last thing a thumb
+   reaches because tapping it is what saves.
+
+   Laid out as a column that fills the viewport, with the grid flush to the
+   bottom: a thumb reaches the bottom third of a phone comfortably and the
+   top third barely, so what is tapped most sits lowest. */
+.fab {
+  position: fixed;
+  right: var(--gutter);
+  bottom: calc(var(--rail-h, 64px) + var(--s2) + env(safe-area-inset-bottom, 0px));
+  z-index: 40;
+  width: 56px;
+  height: 56px;
+  display: grid;
+  place-items: center;
+  border: none;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--bg);
+  box-shadow: var(--shadow-lg);
+  cursor: pointer;
+  transition: transform var(--dur-fast) var(--ease);
+}
+
+.fab:hover,
+.fab:focus-visible { transform: scale(1.06); }
+.fab:active { transform: scale(0.96); }
+
+/* Above 768px the rail is a sidebar, so the bar's height is not in the way. */
+@media (min-width: 768px) {
+  .fab { bottom: var(--s3); }
+}
+
+.has-quickadd { overflow: hidden; }
+
+.qa__scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: grid;
+  place-items: end center;
+  background: rgba(6, 8, 18, 0.62);
+}
+
+.qa {
+  width: min(100%, 460px);
+  height: 100%;
+  max-height: 100%;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: var(--s2) var(--s2) calc(var(--s2) + env(safe-area-inset-bottom, 0px));
+  background: var(--bg);
+  border-radius: var(--radius-card) var(--radius-card) 0 0;
+  box-shadow: var(--shadow-lg);
+}
+
+.qa__head {
+  display: flex;
+  align-items: center;
+  gap: var(--s1);
+}
+
+.qa__title {
+  margin: 0;
+  font-size: var(--t-mid);
+  font-weight: 600;
+}
+
+.qa__days {
+  display: flex;
+  align-items: center;
+  gap: var(--s1);
+  flex-wrap: wrap;
+}
+
+.qa__day {
+  min-height: 36px;
+  padding: 0 14px;
+  border: 1px solid var(--rule);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--ink-dim);
+  font: inherit;
+  font-size: var(--t-sm);
+  cursor: pointer;
+}
+
+.qa__day.is-on {
+  border-color: var(--accent);
+  background: var(--surface-2);
+  color: var(--ink);
+}
+
+.qa__pick {
+  min-height: 36px;
+  padding: 0 10px;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-control);
+  background: var(--surface);
+  color: var(--ink-dim);
+  font: inherit;
+  font-size: var(--t-sm);
+}
+
+/* The amount. Everything else on the sheet is sized against this. */
+.qa__face {
+  display: flex;
+  align-items: baseline;
+  justify-content: flex-end;
+  gap: 6px;
+  min-height: 72px;
+  padding: 0 var(--s1);
+  border-bottom: 1px solid var(--rule);
+}
+
+.qa__sym {
+  font-size: var(--t-mid);
+  color: var(--ink-dim);
+}
+
+/* A long amount shrinks rather than running off the edge: twelve digits at the
+   full size is wider than any phone, and a number that has left the screen is
+   worse than a small one. */
+.qa__amount {
+  min-width: 0;
+  overflow: hidden;
+  font-size: clamp(1.75rem, 11vw, 3.25rem);
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  line-height: 1.05;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.qa__note {
+  width: 100%;
+  min-height: 44px;
+  padding: 0 var(--s1);
+  border: none;
+  border-bottom: 1px solid var(--rule-soft);
+  background: none;
+  color: var(--ink);
+  font: inherit;
+}
+
+.qa__note::placeholder { color: var(--ink-faint); }
+
+.qa__keys {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+}
+
+.qa__key {
+  min-height: 52px;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-control);
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  font-size: 1.35rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  transition: background-color var(--dur-fast) var(--ease);
+}
+
+.qa__key:hover { background: var(--surface-2); }
+.qa__key:active { background: var(--rule); }
+.qa__key--back { color: var(--ink-dim); }
+
+.qa__hint {
+  margin: 0;
+  font-size: var(--t-sm);
+  color: var(--ink-dim);
+  text-align: center;
+}
+
+/* Four across is what fits a phone while leaving the name under each icon
+   readable. The grid is dimmed until an amount exists, because a tap on it is
+   a save and a save of nothing is not a thing to offer. */
+/* The grid takes whatever height is left and scrolls inside itself. It must
+   never push its own first row past the fold: burying the category control is
+   the single most complained-about thing in the app this pattern comes from,
+   and the tap on it is the save. */
+.qa__grid {
+  flex: 1 1 auto;
+  min-height: 152px;
+  overflow-y: auto;
+  align-content: start;
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: var(--s1);
+  transition: opacity var(--dur-fast) var(--ease);
+}
+
+.qa__grid.is-waiting {
+  opacity: 0.45;
+  pointer-events: none;
+}
+
+.qa__tile {
+  display: grid;
+  justify-items: center;
+  gap: 4px;
+  padding: 6px 2px;
+  border: none;
+  border-radius: var(--radius-box);
+  background: none;
+  color: var(--ink-dim);
+  font: inherit;
+  font-size: var(--t-label);
+  cursor: pointer;
+}
+
+.qa__tile__icon {
+  display: grid;
+  place-items: center;
+  width: 48px;
+  height: 48px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--tone) 22%, transparent);
+  border: 1px solid color-mix(in srgb, var(--tone) 55%, transparent);
+  font-size: 1.35rem;
+  line-height: 1;
+}
+
+.qa__tile__name {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.qa__tile:hover .qa__tile__icon,
+.qa__tile:focus-visible .qa__tile__icon {
+  background: color-mix(in srgb, var(--tone) 34%, transparent);
+}
+
+.qa__none {
+  margin: var(--s2) 0;
+  color: var(--ink-dim);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fab,
+  .qa__key,
+  .qa__grid { transition: none; }
+}

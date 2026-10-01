@@ -675,6 +675,22 @@
 
     /* ----------------------------------------------------------- form ---- */
 
+    "quick.open": "Harcama ekle",
+    "quick.title": "Yeni harcama",
+    "quick.title.income": "Yeni gelir",
+    "quick.kind.out": "Gider",
+    "quick.kind.in": "Gelir",
+    "quick.pickDate": "Başka gün",
+    "quick.note": "Not ekle",
+    "quick.chooseCategory": "Kategori seç",
+    "quick.recent": "Son kullandıkların",
+    "quick.all": "Tümü",
+    "quick.saved": "{amount} {category} olarak yazıldı.",
+    "quick.empty": "Önce bir kategori gerekiyor. Limitler bölümünden bir tane ekle, sonra buraya dön.",
+    "quick.hint": "Tutarı yaz, kategoriye dokun. Dokunduğun an kaydedilir.",
+    "a11y.keypad": "Sayı tuşları",
+    "a11y.backspace": "Son basamağı sil",
+    "a11y.amountNow": "Girilen tutar: {amount}",
     "form.date": "Tarih",
     "form.amount": "Tutar",
     "form.amount.hint": "Virgül ya da nokta kullanabilirsin.",

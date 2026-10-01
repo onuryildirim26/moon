@@ -633,6 +633,22 @@
     setClass(railNode(), "is-open", open);
   }
 
+  /* The one control on every screen: it opens the quick sheet, which is how an
+     expense is written now. Bound once at boot rather than per render, because
+     the button lives in the shell and outlives every view. */
+  var fabBound = false;
+
+  function bindFab() {
+    if (fabBound) return;
+    var fab = doc.getElementById("fab");
+    if (!fab) return;
+    fabBound = true;
+    fab.addEventListener("click", function () {
+      var quick = Moon.QuickAdd;
+      if (quick && typeof quick.open === "function") safe(function () { quick.open(); });
+    }, false);
+  }
+
   function bindSheet() {
     if (sheetBound) return;
     var rail = railNode();
@@ -1144,6 +1160,7 @@
 
       buildControls();
       bindSheet();
+      bindFab();
       relabel();
       syncControls();
       bindBus();

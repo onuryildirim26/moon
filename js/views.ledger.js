@@ -1812,6 +1812,12 @@
     id: "ledger",
     titleKey: "nav.ledger",
     quickEntry: quickEntryFor,
+    /* The one place a draft is assembled from typed values: the direction
+       rule, the fixed mark and the length ceilings all live in it. The quick
+       sheet writes through this rather than keeping a second copy, because a
+       second copy is a thing that drifts. */
+    buildDraft: buildDraft,
+
 
     render: function (root) {
       host = root;

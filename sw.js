@@ -35,7 +35,7 @@
    fills a new cache and `activate` throws the old one away, so a reader is
    never served half of one release and half of the next. Bump it whenever the
    files in it change meaningfully. */
-var VERSION = "moon-shell-v4";
+var VERSION = "moon-shell-v5";
 
 /* Caches at this origin that this worker is allowed to delete. The published
    copy lives on a github.io domain shared with every other project the owner
@@ -78,6 +78,7 @@ var PRECACHE = [
   "js/views.accounts.js",
   "js/views.investments.js",
   "js/views.data.js",
+  "js/quickadd.js",
   "js/app.js"
 ];
 
