@@ -35,7 +35,7 @@
    fills a new cache and `activate` throws the old one away, so a reader is
    never served half of one release and half of the next. Bump it whenever the
    files in it change meaningfully. */
-var VERSION = "moon-shell-v3";
+var VERSION = "moon-shell-v4";
 
 /* Caches at this origin that this worker is allowed to delete. The published
    copy lives on a github.io domain shared with every other project the owner
@@ -172,15 +172,19 @@ self.addEventListener("install", function (event) {
       return cache.addAll(SHELL.concat(PRECACHE).map(function (url) {
         return new Request(url, { cache: "reload" });
       }));
+    }).then(function () {
+      return self.skipWaiting();
     })
   );
 });
 
-/* skipWaiting is deliberately NOT called. A page that is already open keeps
-   the worker it loaded with, so it cannot be handed the new release's scripts
-   against the old document; the next load gets the new one. clients.claim only
-   covers the first install, where there is no previous version to disagree
-   with. */
+/* The new worker takes over as soon as it is ready, and the page it takes over
+   reloads itself once (app.js listens for controllerchange). The alternative —
+   waiting for every tab to close — left the owner looking at a week-old copy of
+   his own app while the fix he had asked for sat on the server, which is a
+   worse failure than the reload this costs. The reload is safe because it
+   happens before anything is read: a document never ends up running the next
+   release's scripts, it is simply replaced by that release. */
 self.addEventListener("activate", function (event) {
   event.waitUntil(
     caches.keys().then(function (names) {

@@ -1010,6 +1010,21 @@
         pending.catch(function (error) { log(error, "serviceWorker"); });
       }
     });
+
+    /* A new release has just taken control of this page, so what is on screen
+       is the old one. Reloading once hands the reader the version they came
+       for; without it a worker installed weeks ago keeps serving its own copy
+       and every fix published since is invisible, with nothing on screen
+       admitting it. Guarded against a loop, because a worker that failed to
+       activate could otherwise reload the page forever. */
+    safe(function () {
+      var reloaded = false;
+      worker.addEventListener("controllerchange", function () {
+        if (reloaded) return;
+        reloaded = true;
+        safe(function () { global.location.reload(); });
+      });
+    });
   }
 
   /* -------------------------------------------------------------------- boot */
