@@ -458,7 +458,15 @@
   }
 
   function acceptableName(file) {
-    return /\.(csv|txt)$/i.test(String((file && file.name) || ""));
+    return /\.(csv|txt|pdf)$/i.test(String((file && file.name) || ""));
+  }
+
+  /* A PDF takes a different road to the same place: there is no delimiter to
+     sniff, so the columns are worked out from where the words sit on the page
+     and the result is handed to the same review step. */
+  function isPdf(file) {
+    return /\.pdf$/i.test(String((file && file.name) || "")) ||
+      String((file && file.type) || "") === "application/pdf";
   }
 
   function pickFile(files) {
@@ -493,6 +501,11 @@
     wiz.errorKey = null;
     redraw();
 
+    if (isPdf(file)) {
+      beginPdf(file);
+      return;
+    }
+
     CSV.read(file).then(function (result) {
       wiz.busy = false;
       wiz.bytes = result.bytes || null;
@@ -507,6 +520,68 @@
       var params = null;
       if (key === "csv.tooLarge") {
         params = { size: fmtBytes((file && file.size) || 0) };
+      }
+      wizardError(key, params);
+    });
+  }
+
+  /* The PDF road. Moon.PDF hands back headers and rows in the same shape
+     CSV.parse produces, so from the review step on there is one code path and
+     one set of column rules — the only difference is how the table was found. */
+  function beginPdf(file) {
+    var PDF = Moon.PDF;
+    if (!PDF || typeof PDF.read !== "function") {
+      wizardError("err.unknown");
+      return;
+    }
+
+    PDF.read(file).then(function (result) {
+      wiz.busy = false;
+      wiz.pdf = true;
+      wiz.bytes = null;
+      wiz.text = "";
+      wiz.encoding = null;
+      wiz.warnings = (result.warnings || []).slice();
+      wiz.pdfPages = result.pages || 0;
+      wiz.pdfLines = result.lines || 0;
+
+      /* No delimiter and no header row to choose: the geometry already
+         answered both, so those controls have nothing to offer here. */
+      wiz.sniffed = true;
+      wiz.parsed = {
+        headers: result.headers || [],
+        rows: result.rows || [],
+        issues: [],
+        delimiter: null,
+        headerRow: 0,
+        columnCount: (result.headers || []).length
+      };
+
+      /* Same role guessing as a CSV gets, minus the delimiter it has no use
+         for: the headers and rows reaching it are the same shape either way. */
+      var Importer = Moon.Importer;
+      var guess = (Importer && typeof Importer.guessRoles === "function")
+        ? Importer.guessRoles(wiz.parsed.headers, wiz.parsed.rows)
+        : null;
+      wiz.guess = guess;
+      wiz.colRoles = rolesFrom(guess, columnCount());
+      if (guess) {
+        wiz.dateOrder = guess.dateOrder === "mdy" ? "mdy" : "dmy";
+        wiz.decimal = guess.decimal === "." ? "." : ",";
+        wiz.signRule = guess.signRule === "debitCredit" ? "debitCredit" : "negativeIsExpense";
+      }
+      if (!wiz.defaultCategoryId) wiz.defaultCategoryId = defaultCategoryGuess();
+      wiz.built = null;
+      wiz.skipLines = null;
+
+      goToStep(2);
+      redraw();
+    }, function (error) {
+      wiz.busy = false;
+      var key = (error && error.key) || "csv.err.readFailed";
+      var params = (error && error.params) || null;
+      if (key === "csv.err.tooBig" && params && params.size) {
+        params = { size: fmtBytes(params.size) };
       }
       wizardError(key, params);
     });
@@ -799,7 +874,7 @@
           type: "file",
           id: id,
           "class": "field__input",
-          accept: ".csv,.txt,text/csv,text/plain"
+          accept: ".csv,.txt,.pdf,text/csv,text/plain,application/pdf"
         });
         input.addEventListener("change", function () {
           var file = pickFile(input.files);
@@ -807,7 +882,7 @@
         });
         return input;
       })(),
-      el("p", { "class": "field__hint", text: t("csv.step1.accept") })
+      el("p", { "class": "field__hint", text: t(Moon.I18n && typeof Moon.I18n.has === "function" && Moon.I18n.has("csv.step1.acceptPdf") ? "csv.step1.acceptPdf" : "csv.step1.accept") })
     ]);
     zone.appendChild(picker);
 
