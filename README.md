@@ -1,5 +1,7 @@
 # Moon
 
+[![tests](https://github.com/onuryildirim26/moon/actions/workflows/test.yml/badge.svg)](https://github.com/onuryildirim26/moon/actions/workflows/test.yml) ![zero dependencies](https://img.shields.io/badge/dependencies-0-brightgreen) ![licence MIT](https://img.shields.io/badge/licence-MIT-blue)
+
 A budget ledger that runs entirely in your browser. No account, no server, no build step,
 no dependencies — one HTML file and a handful of plain JavaScript files.
 
@@ -147,6 +149,22 @@ that drifted between catalogues. Amounts and dates are not translated: they are 
 `Intl` from the code you registered, so `"de"` already groups thousands with a dot and marks
 the decimal with a comma.
 
+## Running the tests
+
+Node 18 or newer, and nothing to install — the suite uses `node:test`, `node:assert` and
+`node:vm`, which ship with Node:
+
+```
+node --test tests/selftest.test.js tests/claims.test.js
+```
+
+`tests/load.js` evaluates the files in the order `index.html` declares them, against a
+small stand-in for the browser. Two kinds of test run on top of it: each module's own
+`_selftest()`, which carries the detailed coverage and is also callable from the browser
+console, and `tests/claims.test.js`, which checks the promises this README makes — the
+money arithmetic, the date handling, and every bank-file case named above, including both
+sample statements in `ornek/`.
+
 ## Accessibility
 
 Keyboard reachable throughout, with a visible focus ring that is never removed. Ledger rows
@@ -277,6 +295,22 @@ kalmaz, İngilizcesine düşer ve bunu konsolda söyler; `Moon.I18n._verify()` d
 anahtarları ve kataloglar arasında kayan yer tutucuları sıralar. Tutar ve tarih biçimi
 katalogda değil: kaydettiğin dil kodundan `Intl` ile kurulur, yani `"de"` binlikleri noktayla,
 ondalığı virgülle yazar.
+
+## Testleri çalıştırmak
+
+Node 18 ve üstü yeterli, kurulacak bir şey yok — takım `node:test`, `node:assert` ve
+`node:vm` kullanıyor, üçü de Node ile birlikte geliyor:
+
+```
+node --test tests/selftest.test.js tests/claims.test.js
+```
+
+`tests/load.js` dosyaları `index.html`'in sırasıyla, tarayıcının yerini tutan küçük bir
+nesneye karşı çalıştırır. Üstünde iki tür test koşar: her modülün kendi `_selftest()`'i
+(ayrıntılı kapsam burada, tarayıcı konsolundan da çağrılabilir) ve
+`tests/claims.test.js` — bu README'nin verdiği sözleri sınar: para aritmetiği, tarih
+işleme ve yukarıda sayılan her banka dosyası durumu, `ornek/` altındaki iki örnek ekstre
+dahil.
 
 ## Destek olmak
 
