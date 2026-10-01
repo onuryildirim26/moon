@@ -692,6 +692,10 @@
       type: type,
       element: node,
       control: control,
+      /* The field knows its own label. Everything that wants the words back —
+         a clipped row turning them into a title and a placeholder — reads it
+         from here instead of hunting for .field__label in the subtree. */
+      label: label,
       errorKey: null,
       touched: false
     };
@@ -1030,8 +1034,36 @@
   }
 
   function labelTextOf(fieldNode) {
-    var label = dom.qs(".field__label", fieldNode);
+    var entry = fieldNode && fieldNode.moonField;
+    var label = (entry && entry.label) || dom.qs(".field__label", fieldNode);
     return label && label.textContent ? String(label.textContent) : "";
+  }
+
+  /* The asterisk is drawn by .field__req and hidden from the accessibility
+     tree; it has no business being repeated inside the box. */
+  function withoutRequiredMark(text) {
+    return String(text === null || text === undefined ? "" : text).replace(/[\s*]+$/, "");
+  }
+
+  /* Which fields a hint belongs in. A date field is left out by its declared
+     type rather than by the element it ends up as: where the browser has no
+     date input it becomes a text box, and that case already carries
+     form.dateHint under it — two copies of the same sentence is one too many.
+     Everything that is not a line of text ignores the attribute anyway. */
+  var NO_PLACEHOLDER_FIELDS = { date: true, select: true, switch: true };
+  var PLACEHOLDER_INPUTS = {
+    text: true, search: true, email: true, url: true, tel: true,
+    password: true, number: true
+  };
+
+  function takesPlaceholder(entry) {
+    var control = entry && entry.control;
+    if (!control || !control.tagName) return false;
+    if (NO_PLACEHOLDER_FIELDS[entry.type] === true) return false;
+    var tag = String(control.tagName).toLowerCase();
+    if (tag === "textarea") return true;
+    if (tag !== "input") return false;
+    return PLACEHOLDER_INPUTS[String(control.getAttribute("type") || "text").toLowerCase()] === true;
   }
 
   /* ------------------------------------------------------------- quickRow */
@@ -1072,12 +1104,22 @@
     if (!labelled) {
       /* The row is one line, so the <label> is clipped rather than removed —
          it stays bound to the control through `for`, and the same translated
-         words become the control's title for a pointer that hovers it. */
+         words become the control's title for a pointer that hovers it.
+
+         A clipped label leaves a sighted reader with identical empty boxes, so
+         the same words go in as a placeholder too. It is a hint, never the
+         label: the <label> is still there and still bound, which is what a
+         screen reader and a `for` click both use. A date input prints its own
+         format and a select shows its first option, so neither needs one. */
       mainNodes.concat(extraNodes).forEach(function (node) {
         var entry = node.moonField;
         if (!entry || !entry.control) return;
         var text = labelTextOf(node);
-        if (text && !entry.control.getAttribute("title")) entry.control.setAttribute("title", text);
+        if (!text) return;
+        if (!entry.control.getAttribute("title")) entry.control.setAttribute("title", text);
+        if (!takesPlaceholder(entry)) return;
+        if (entry.control.getAttribute("placeholder")) return;
+        entry.control.setAttribute("placeholder", withoutRequiredMark(text));
       });
     }
 
@@ -2686,6 +2728,41 @@
 
     check("quickRow is a form", qr.element.tagName === "FORM");
     check("quickRow class", cls(qr.element) === "quickrow");
+
+    /* A clipped label leaves a sighted reader with identical empty boxes, so
+       the label's own words go in as a placeholder as well. Only where one is
+       drawn: a date input prints its format and a select shows an option, and
+       a hint flashing in either would be noise. */
+    check("quickRow hints the money box",
+      qr.fields.amount.control.getAttribute("placeholder") === "a");
+    check("quickRow hints the text box",
+      qr.fields.note.control.getAttribute("placeholder") === "n");
+    check("quickRow leaves the date box alone",
+      qr.fields.date.control.getAttribute("placeholder") === null);
+    check("quickRow leaves the select alone",
+      qr.fields.categoryId.control.getAttribute("placeholder") === null);
+
+    /* The asterisk belongs to .field__req, which is hidden from the
+       accessibility tree; repeating it inside the box would be a third copy of
+       a mark that is already drawn once. */
+    var qrReq = quickRow({
+      id: "qr-req",
+      fields: [{ type: "text", name: "note", label: "Note", required: true }]
+    });
+    check("quickRow label carries the required mark",
+      labelTextOf(qrReq.fields.note.element) === "Note*");
+    check("quickRow hint drops the required mark",
+      qrReq.fields.note.control.getAttribute("placeholder") === "Note");
+
+    /* A row that asks for visible labels has nothing to replace, so it gets no
+       placeholder at all. */
+    var qrLabelled = quickRow({
+      id: "qr-labelled",
+      labels: "visible",
+      fields: [{ type: "text", name: "note", label: "Note" }]
+    });
+    check("a labelled row needs no hint",
+      qrLabelled.fields.note.control.getAttribute("placeholder") === null);
     check("quickRow novalidate", qr.element.getAttribute("novalidate") !== null);
     check("quickRow fields row", deep(qr.element, "quickrow__fields").length === 1);
     check("quickRow submit is type=submit",

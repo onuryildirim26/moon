@@ -37,7 +37,7 @@ function makeNode(tag = "div") {
       contains(c) { return this._set.has(c); },
     },
     firstChild: null, parentNode: null,
-    textContent: "", innerHTML: "", value: "",
+    innerHTML: "", value: "",
     tabIndex: -1, disabled: false, offsetParent: null,
     setAttribute(k, v) { this.attributes[k] = String(v); },
     getAttribute(k) { return k in this.attributes ? this.attributes[k] : null; },
@@ -65,6 +65,32 @@ function makeNode(tag = "div") {
     showModal() {}, close() {}, scrollIntoView() {},
     getBoundingClientRect: () => ({ width: 0, height: 0, top: 0, left: 0, right: 0, bottom: 0 }),
   };
+
+  /* textContent has to read down the tree, not sit there as an empty string.
+     A label built as [text, <span>*</span>] is the shape half the interface
+     uses to mark a required field, and code that reads such a label back —
+     ui.js turns it into the control's title and placeholder — saw "" here and
+     silently did nothing, so none of it was covered.
+
+     Assigning replaces the children, as it does in a browser. The one place
+     this stand-in is loose: appending after an assignment keeps the assigned
+     text instead of its text node, which no caller here does and which keeps
+     `children` counts the same as before. */
+  let own = "";
+  Object.defineProperty(node, "textContent", {
+    enumerable: true,
+    configurable: true,
+    get() {
+      return own + this.childNodes.map((c) => (c && c.textContent) || "").join("");
+    },
+    set(value) {
+      own = value === null || value === undefined ? "" : String(value);
+      this.children = [];
+      this.childNodes = [];
+      this.firstChild = null;
+    },
+  });
+
   return node;
 }
 
