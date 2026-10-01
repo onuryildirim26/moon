@@ -1,13 +1,19 @@
 # Moon
 
+[![tests](https://github.com/onuryildirim26/moon/actions/workflows/test.yml/badge.svg)](https://github.com/onuryildirim26/moon/actions/workflows/test.yml)
+[![licence: MIT](https://img.shields.io/badge/licence-MIT-informational)](LICENSE)
+![dependencies: 0](https://img.shields.io/badge/dependencies-0-brightgreen)
+[![demo](https://img.shields.io/badge/demo-live-e6a94f)](https://onuryildirim26.github.io/moon/)
+
 A budget ledger that runs entirely in your browser. No account, no server, no build step,
 no dependencies — one HTML file and a handful of plain JavaScript files.
 
-**[Open Moon →](https://onuryildirim26.github.io/moon/)** · [Türkçe](#moon--bütçe-defteri)
+**[Open Moon →](https://onuryildirim26.github.io/moon/)** · English · [Türkçe](README.tr.md)
 
-[<img src="assets/coffee.png" alt="Buy me a coffee" width="240">](https://buymeacoffee.com/onuryildirim26)
-
-![Moon's dashboard: the remaining daily allowance, the allowance trail and category limit scales](assets/onizleme.png)
+<picture>
+  <source media="(prefers-color-scheme: light)" srcset="assets/onizleme-light.png">
+  <img src="assets/onizleme.png" alt="Moon's panel on day 17 of 30: ₺350.67 of daily allowance left, the allowance trail against the pace line, and what is left for the rest of the month">
+</picture>
 
 ---
 
@@ -105,6 +111,7 @@ js/ui.js            dialogs, fields, money cells, undo strip, empty states
 js/sample.js        the sample month
 js/views.*.js       one file per section
 js/app.js           boot, hash router, theme, period
+tests/              node --test, no dependencies (see Tests below)
 ```
 
 Two decisions worth naming, because they are where money apps usually break:
@@ -118,6 +125,28 @@ used anywhere.
 stored. `toISOString().slice(0, 10)` shifts an entry typed at 02:30 in Istanbul back a day,
 and `new Date("2026-03-01")` is parsed as UTC. Comparing ISO strings sorts chronologically
 and takes time zones out of the equation entirely.
+
+### Tests
+
+The two decisions above, and the other promises in this README, are checked on every push:
+
+```bash
+node --test tests/*.test.js
+```
+
+Node 20 or newer, nothing to install. `tests/load.js` reads the script order out of
+`index.html` and loads those same files into a Node `vm` context, so the tests run what the
+page ships, not a copy of it. The suite runs the `_selftest()` already built into money,
+dates, csv, store, model and importer, and adds checks for the claims made here:
+
+- amounts come out as integers, and a hundred `19.99`s sum to exactly `199900`;
+- an entry made just after midnight keeps its day in Istanbul, Los Angeles, Auckland and UTC,
+  and day arithmetic survives a daylight-saving jump;
+- both sample statements parse, and every balance in the Turkish one reconciles to the kuruş;
+- BOM headers, quoted delimiters, preamble text, `sep=;` and repeated header rows;
+- the Turkish and English catalogues have the same keys and the same placeholders;
+- the source has no `parseFloat(`, no `fetch`, no module syntax, and `index.html` loads
+  nothing remote except Google Fonts.
 
 ### Adding a language
 
@@ -174,119 +203,3 @@ never will.
 ## Licence
 
 MIT — see [LICENSE](LICENSE). Use it, fork it, ship your own version of it.
-
----
-
-# Moon — bütçe defteri
-
-Tamamen tarayıcında çalışan bir bütçe defteri. Hesap yok, sunucu yok, kurulum yok,
-bağımlılık yok — bir HTML dosyası ve birkaç düz JavaScript dosyası.
-
-**[Moon'u aç →](https://onuryildirim26.github.io/moon/)**
-
-## Neden var
-
-Bütçe uygulamalarının çoğu önce banka şifrenizi ister, sonra size bir pasta grafiği gösterir.
-Moon ikisini de yapmaz. Ne harcadığını yazarsın, ya da bankanın zaten verdiği CSV ekstreyi
-sürükleyip bırakırsın; uygulama da bütçenin asıl sorusunu cevaplar:
-
-> **Bugün, sınırı aşmadan ne kadar harcayabilirim?**
-
-Bu sayı — kalan günlük pay — ekrandaki ilk şey. Ham bir bakiye değil, türetilmiş bir ölçüm:
-değişken limitlerinden kalan para, dönemde kalan güne bölünür. Kira gibi sabit giderler bu
-havuzun dışında tutulur, böylece ayın 1'inde ödenen büyük bir kalem ayın geri kalanını
-felaket gibi göstermez.
-
-## Ne yapar
-
-- **Elle kayıt** — tarih, tutar, kategori, açıklama. Her biri on saniye.
-- **Ekstre yükleme** — CSV'yi bırak, sütunları bir kez eşleştir, geleni incele.
-  Türk bankası biçimi (`;` ve `1.234,56`) ve İngilizce biçim (`,` ve `1,234.56`) birlikte
-  çalışır; BOM'lu başlık, tırnak içindeki ayırıcı, baştaki serbest metin ve tekrar eden
-  başlık satırları da.
-- **Kategori başına aylık limit** — hız işaretli bir ölçek olarak gösterilir; yüzdeyi değil,
-  ayın önünde mi gerisinde mi olduğunu görürsün.
-- **Tekrarlayan ödemeler** — kira, faturalar, abonelikler. Sabit olarak işaretlenir, günlük
-  payın dışında tutulur ve ayrı raporlanır.
-- **Tasarruf hedefleri** — ne kadar, ne zamana, ayda kaça denk geliyor.
-- **Borç ve alacak** — kim kime ne borçlu, ödendi mi. Bütçe hesabına asla karışmaz.
-- **Elle yazılmış SVG grafikler** — pay izi, gün sismografı, hız köşegenine karşı kümülatif
-  eğri ve on iki aylık yoğunluk ızgarası. Grafik kütüphanesi yok, hiçbir yerde pasta grafiği
-  yok: insan gözü sekiz açıyı karşılaştıramaz.
-- **Türkçe ve İngilizce**, her an değiştirilebilir. Dört para birimi.
-- **Koyu ve açık** — kadran ve kâğıt. Sen seçmedikçe sistemini izler.
-
-## Verin
-
-Her şey tarayıcında, `localStorage` içinde tek bir anahtarda durur. Hiçbir yere gönderilmez,
-çünkü gönderilecek bir yer yok — Moon'un sunucusu yoktur.
-
-- **Yedek al**: tek bir JSON dosyası, insan tarafından okunabilir, içinde her kayıt var.
-- **Geri yükle**: başka bir tarayıcıda ya da başka bir bilgisayarda, değiştirerek veya
-  birleştirerek.
-- **Depolama sınırlı** (~5 MB, sıradan kullanımda yaklaşık on yıl). Bir yazma başarısız
-  olursa Moon bunu ekranda söyler ve girdiğin kaydı sessizce düşürmek yerine bellekte tutar.
-- **Gizli sekmede** bazı tarayıcılar depolamayı kapatır. Moon bunu fark eder, uyarır ve
-  kaydediyormuş gibi yapmak yerine salt-okunur bir oturum olarak çalışır.
-
-Sayfanın yaptığı tek dış istek Google Fonts stil dosyasıdır. `index.html` içindeki üç yazı
-tipi satırını silersen Moon tamamen çevrimdışı olur; `css/tokens.css` içindeki yedek yazı
-tipi zincirleri düzeni bozmadan devralır.
-
-## Nasıl çalıştırılır
-
-**Yayındaki kopyayı kullan:** <https://onuryildirim26.github.io/moon/>
-
-**Ya da kendi bilgisayarında** — hiçbir araç kurmadan:
-
-```bash
-git clone https://github.com/onuryildirim26/moon.git
-```
-
-Sonra `index.html` dosyasına çift tıkla. Kurulum bundan ibaret. Moon bilerek `file://` ile
-çalışacak şekilde yazıldı: klasik script etiketleri, ES module yok, `fetch` yok.
-
-Denemek için `ornek/` klasöründe iki örnek ekstre var: `ornek-ekstre-tr.csv` ve
-`sample-statement-en.csv`. Uygulamanın içinde de hazır bir örnek ay var — bir tuşla yüklenir,
-bir tuşla temizlenir.
-
-## Dil eklemek
-
-Hiçbir metin görünümlerin içinde durmaz; üçüncü bir dilin dokunacağı tek yer katalog.
-Örnek olarak Almanca:
-
-1. `js/lang.en.js` dosyasını `js/lang.de.js` olarak kopyala, içindeki tek atamayı
-   `Moon.Lang.en`'den `Moon.Lang.de`'ye al, sonra değerleri çevir. Anahtarları ve sıralarını
-   koru; `{yer tutucu}` işaretlerini de — cümleden düşen bir `{count}` ekranda süslü
-   parantezin kendisi olarak görünür.
-2. `index.html`'e tek bir script satırı ekle; bir sonraki adım onu çağırdığı için
-   **`js/i18n.js`'ten sonra** olacak:
-
-   ```html
-   <script src="js/lang.de.js"></script>
-   ```
-3. Yeni dosyanın sonuna kaydı yaz:
-
-   ```js
-   Moon.I18n.register("de", Moon.Lang.de);
-   ```
-
-Hepsi bu. Başlıktaki dil seçici kendini `Moon.I18n.languages()` üzerinden kurar, yani `DE`
-bir sonraki açılışta `TR` ve `EN`'in yanında belirir. Henüz çevirmediğin bir anahtar boş
-kalmaz, İngilizcesine düşer ve bunu konsolda söyler; `Moon.I18n._verify()` da eksik
-anahtarları ve kataloglar arasında kayan yer tutucuları sıralar. Tutar ve tarih biçimi
-katalogda değil: kaydettiğin dil kodundan `Intl` ile kurulur, yani `"de"` binlikleri noktayla,
-ondalığı virgülle yazar.
-
-## Destek olmak
-
-Moon ücretsiz ve MIT lisanslı; hiçbir şey ödemeden, hesap açmadan, bir şey sormadan
-kullanılır ve öyle kalacak. Bir akşamını kurtardıysa ve bir şey göndermek istersen bir
-kahve var. Bir karşılığı yok: açılmayan özellik, kapanmayan bant, görmediğin bir reklam
-yok. Uygulamanın kendisi hiçbir yerde para istemez, istemeyecek.
-
-[<img src="assets/coffee.png" alt="Buy me a coffee" width="240">](https://buymeacoffee.com/onuryildirim26)
-
-## Lisans
-
-MIT — [LICENSE](LICENSE) dosyasına bak. Kullan, çatalla, kendi sürümünü yayınla.
