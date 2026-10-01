@@ -1,6 +1,11 @@
 /* Moon — the Limits section (#limitler; contract §13, addendum E10/E11).
  *
  * Three readings, in reading order:
+ *   0. beside the section title, one quiet control that offers to read the
+ *      reader's own closed periods and propose a limit per category
+ *      (Moon.Model.suggestLimits). It opens a block inside this same section,
+ *      not a screen or a standing band, and closes itself once the chosen rows
+ *      are written. Rows that already carry a limit arrive unticked.
  *   1. one horizontal scale per category (Moon.Charts.meter). This IS the
  *      category comparison chart — every row shares one x axis — which is why
  *      there is no pie anywhere in this application.
@@ -35,6 +40,27 @@
      built to another ratio would land the spill in the wrong place (jury G1). */
   var TRACK_WIDTH = 240;
   var READOUT_WIDTH = 132;
+
+  /* The suggestion block (Moon.Model.suggestLimits) is asked for, never
+     standing: it opens from one control beside the section title and closes
+     again the moment it has done its work. These four variables are the whole
+     of its state, and every one of them survives a re-render on purpose —
+     the router redraws this file on state:change and lang:change, and a reader
+     who switched language mid-review must not lose their ticks. */
+  var SUGGEST_ID = "limits-suggest";
+  var TOGGLE_ID = "limits-suggest-toggle";
+
+  var suggestOpen = false;
+  /* categoryId -> boolean. null means "nobody has touched a box yet", which is
+     not the same as "every box is off". */
+  var suggestPicks = null;
+  /* How many limits the last write produced, read once by the next render. */
+  var appliedCount = 0;
+  /* Opening and closing rebuild the control that was just pressed, so the
+     focus has to be put back by hand or it falls to <body>. */
+  var refocusToggle = false;
+  var toggleNode = null;
+  var lastRoot = null;
 
   /* ---------------------------------------------------------------- basics */
 
@@ -265,12 +291,18 @@
     }
   }
 
-  function notice(kind, messageKey, params) {
+  function notice(kind, messageKey, params, dismissible) {
     var UI = Moon.UI;
     if (!UI || typeof UI.notice !== "function") return null;
     var node;
     try {
-      node = UI.notice({ kind: kind, messageKey: messageKey, params: params });
+      node = UI.notice({
+        kind: kind,
+        messageKey: messageKey,
+        params: params,
+        dismissible: !!dismissible,
+        dismissKey: "common.close"
+      });
     } catch (error) {
       log(error);
       return null;
@@ -636,6 +668,211 @@
     return null;
   }
 
+  /* ------------------------------------------------- the budget suggestion */
+
+  /* Opening and closing the block change nothing in the Store, so the router
+     never hears about them and the section has to redraw itself. Safe to ask
+     for at any time: render() reads the model again and rebuilds from scratch,
+     which is the same thing the router asks of it. */
+  function redraw() {
+    if (!lastRoot) return;
+    try {
+      render(lastRoot);
+    } catch (error) {
+      log(error);
+    }
+  }
+
+  function openSuggest() {
+    suggestOpen = true;
+    /* A fresh reading starts from the model's own defaults. */
+    suggestPicks = null;
+    appliedCount = 0;
+    refocusToggle = true;
+    redraw();
+  }
+
+  function closeSuggest() {
+    suggestOpen = false;
+    suggestPicks = null;
+    refocusToggle = true;
+    redraw();
+  }
+
+  function suggestions() {
+    var data = read("suggestLimits", undefined, null) || {};
+    return {
+      basis: data.basis || {},
+      rows: Array.isArray(data.rows) ? data.rows : []
+    };
+  }
+
+  /* A row with a limit already on it arrives UNTICKED. Overwriting a figure the
+     reader typed themselves, without being asked, is the worst thing this block
+     could do; leaving the box empty says so without a sentence about it. */
+  function pickedByDefault(row) {
+    return row.current === null || row.current === undefined;
+  }
+
+  function isPicked(row) {
+    if (!row || !row.categoryId) return false;
+    if (suggestPicks && suggestPicks[row.categoryId] !== undefined) {
+      return !!suggestPicks[row.categoryId];
+    }
+    return pickedByDefault(row);
+  }
+
+  function setPicked(categoryId, on) {
+    if (!suggestPicks) suggestPicks = Object.create(null);
+    suggestPicks[categoryId] = !!on;
+  }
+
+  /* One suggestion speaks in the scale rows' own grid: name left, a small grey
+     note in the middle, the figure right. No new class, no new frame; the
+     checkbox sits in the house control row (.switch) and the whole row is the
+     <label>, so the name, the note and the amount are all one hit target. */
+  function suggestRow(row, onToggle) {
+    var box = dom.el("input", { type: "checkbox" });
+    box.checked = isPicked(row);
+    box.addEventListener("change", guard(function () {
+      setPicked(row.categoryId, box.checked);
+      onToggle();
+    }));
+
+    var name = dom.el("span", {
+      "class": "meter__name" + (row.fixed ? " is-fixed" : ""),
+      title: row.name,
+      text: row.name
+    });
+
+    var note = dom.el("span", {
+      "class": "meter__scale sm dim",
+      /* "measured over 3 periods" / "seen in one period only". The thinness of
+         the evidence is the reading here, not a score. */
+      text: t("limits.suggest.confidence." + (row.confidence || "low"), { count: row.monthsSeen })
+    });
+
+    var readout = dom.el("span", { "class": "meter__readout" }, moneyCell(row.suggested));
+    if (!pickedByDefault(row)) {
+      readout.appendChild(dom.el("span", {
+        "class": "meter__drift",
+        text: t("limits.suggest.current", { amount: money(row.current) })
+      }));
+    }
+
+    return dom.el("label", { "class": "meter" }, [
+      dom.el("span", { "class": "switch" }, [box, name]),
+      note,
+      readout
+    ]);
+  }
+
+  function applyPicked(rows) {
+    var Model = model();
+    if (!Model || typeof Model.applyLimitSuggestions !== "function") return;
+
+    var chosen = rows.filter(isPicked);
+    if (!chosen.length) return;
+
+    /* Closed before the write, not after: the write emits state:change and the
+       router redraws this section underneath, so the block has to be gone from
+       this file's state by then or it would come straight back. */
+    suggestOpen = false;
+    suggestPicks = null;
+    refocusToggle = true;
+
+    var written = 0;
+    try {
+      written = Model.applyLimitSuggestions(chosen) || 0;
+    } catch (error) {
+      log(error);
+    }
+    /* Limits are editable, so this is not an undo offer — it is a count, said
+       once, in the band at the top of the section whose figures just changed. */
+    appliedCount = written > 0 ? written : 0;
+    /* A write emitted state:change, and the router coalesces its redraw into a
+       timeout — so the redraw is already on its way and will pick up both the
+       count and the focus. Asking for one here would draw the band and have it
+       wiped a tick later. Only a write that never happened needs a redraw of
+       its own, to put the closed block on screen. */
+    if (!written) redraw();
+  }
+
+  function suggestBlock() {
+    var data = suggestions();
+    var basis = data.basis;
+    var rows = data.rows;
+    var complete = basis.complete === true;
+
+    var nodes = [dom.el("h3", { text: t("limits.suggest.title") })];
+    var applyBtn = null;
+
+    function syncApply() {
+      if (!applyBtn) return;
+      var any = rows.some(isPicked);
+      applyBtn.setAttribute("aria-disabled", any ? "false" : "true");
+    }
+
+    if (!complete) {
+      /* No closed period: say that and draw no list at all. A suggestion made
+         from half a month would be half a limit. */
+      nodes.push(small(t("limits.suggest.none")));
+    } else {
+      nodes.push(small(t("limits.suggest.body")));
+      nodes.push(small(t("limits.suggest.basis", {
+        count: (basis.periods || []).length,
+        entries: basis.entryCount || 0
+      })));
+
+      if (!rows.length) {
+        /* Periods closed, but nothing in them to suggest from. The catalogue
+           has no sentence for that case yet, so the block falls back to the one
+           that already explains why there is no suggestion. */
+        nodes.push(small(tk("limits.suggest.empty", "limits.suggest.none")));
+      } else {
+        var list = dom.el("div");
+        rows.forEach(function (row) {
+          list.appendChild(suggestRow(row, syncApply));
+        });
+        nodes.push(list);
+      }
+    }
+
+    var actions = dom.el("div", { "class": "form__actions" });
+    if (complete && rows.length) {
+      applyBtn = btn("limits.suggest.apply", "primary", function () {
+        if (applyBtn.getAttribute("aria-disabled") === "true") return;
+        applyPicked(rows);
+      });
+      /* aria-disabled rather than [disabled]: a control that cannot act yet
+         still has to be reachable from the keyboard to be read. */
+      syncApply();
+      actions.appendChild(applyBtn);
+    }
+    actions.appendChild(btn("common.close", "quiet", closeSuggest));
+    nodes.push(actions);
+
+    return dom.el("div", { id: SUGGEST_ID }, nodes);
+  }
+
+  /* The one entry point: a quiet control beside the section title, next to the
+     limit total it is offering to fill in. */
+  function suggestToggle() {
+    var Model = model();
+    if (!Model || typeof Model.suggestLimits !== "function") return null;
+
+    var node = btn("limits.suggest.action", "quiet", function () {
+      if (suggestOpen) closeSuggest();
+      else openSuggest();
+    });
+    node.id = TOGGLE_ID;
+    node.setAttribute("aria-expanded", suggestOpen ? "true" : "false");
+    /* Only while the block is on the page: aria-controls pointing at an id that
+       does not exist is a dangling reference, not a disclosure. */
+    if (suggestOpen) node.setAttribute("aria-controls", SUGGEST_ID);
+    return node;
+  }
+
   /* ------------------------------------------------------- section: scales */
 
   function limitTotals(ctx) {
@@ -694,6 +931,16 @@
        ("these rows turn into scales the moment you set a limit"), and the
        category list below is still the way to set one. */
     var anyLimit = groups.limited > 0 || ((ctx.summary || {}).limitTotal || 0) > 0;
+
+    /* The count of what the last write produced, said once. It stands above the
+       scales it changed and goes away with the next reading of this screen. */
+    if (appliedCount > 0) {
+      var band = notice("info", "limits.suggest.applied", { count: appliedCount }, true);
+      appliedCount = 0;
+      if (band) body.push(band);
+    }
+    if (suggestOpen) body.push(suggestBlock());
+
     if (!anyLimit) {
       body.push(emptyBlock({
         headingKey: "empty.limits.heading",
@@ -715,11 +962,20 @@
     if (groups.over) body.push(small(t("limits.overflow.note")));
     body.push(scaleTable(ctx.rows));
 
+    /* The head carries the total reading and, beside it, the one control that
+       opens the suggestion block. .switch is the house row for "a control with
+       its label", which is exactly what these two are. */
+    toggleNode = suggestToggle();
+    var asideKids = [];
+    if (anyLimit) {
+      asideKids.push(dom.el("span", { "class": "num", text: limitTotals(ctx) }));
+    }
+    if (toggleNode) asideKids.push(toggleNode);
+
     return UI.section({
       id: "limits-scales",
       titleKey: "limits.title",
-      asideKey: anyLimit ? "limits.total" : null,
-      asideParams: { amount: money((ctx.summary || {}).limitTotal || 0) },
+      aside: asideKids.length ? dom.el("span", { "class": "switch" }, asideKids) : null,
       body: body
     });
   }
@@ -1034,6 +1290,8 @@
 
   function render(root) {
     if (!root || !dom) return;
+    lastRoot = root;
+    toggleNode = null;
     dom.clear(root);
     if (!Moon.UI || !model()) return;
 
@@ -1043,6 +1301,20 @@
     root.appendChild(scalesSection(ctx));
     root.appendChild(yearSection(ctx));
     root.appendChild(categorySection());
+
+    /* Opening, closing and applying all replace the control that was pressed.
+       Putting the focus back on it is the whole of the disclosure's keyboard
+       contract: Tab from there walks straight into the block. */
+    if (refocusToggle) {
+      refocusToggle = false;
+      if (toggleNode && typeof toggleNode.focus === "function") {
+        try {
+          toggleNode.focus();
+        } catch (error) {
+          log(error);
+        }
+      }
+    }
   }
 
   var view = {
@@ -1057,9 +1329,19 @@
       }
     },
     destroy: function () {
-      /* Nothing to release: no subscription, no timer, no cached node, and the
-         undo offer in #strip is deliberately left standing — its handler calls
-         Moon.Model, so it keeps working after the reader has walked away. */
+      /* No subscription and no timer to release, and the undo offer in #strip
+         is deliberately left standing — its handler calls Moon.Model, so it
+         keeps working after the reader has walked away.
+         What does have to go: the cached root (redrawing into a root the router
+         has handed to another view would paint this section over it) and the
+         suggestion block, which is a transient answer to "suggest me limits"
+         and should not be waiting when the reader comes back. */
+      lastRoot = null;
+      toggleNode = null;
+      suggestOpen = false;
+      suggestPicks = null;
+      appliedCount = 0;
+      refocusToggle = false;
     }
   };
 

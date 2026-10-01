@@ -221,28 +221,48 @@
   var mounted = Object.create(null);
   var flashes = Object.create(null);
 
-  function setFlash(id, key, params, kind) {
-    flashes[id] = key ? { key: key, params: params || null, kind: kind || "info" } : null;
+  /* `extra` is an optional second sentence, {key, params}: a promotion reports
+     the rule it wrote and, separately, how many records left the allowance pool.
+     Two catalogue sentences, so they are two lines and never concatenated. */
+  function setFlash(id, key, params, kind, extra) {
+    flashes[id] = key ? {
+      key: key,
+      params: params || null,
+      kind: kind || "info",
+      extra: extra && extra.key ? extra : null
+    } : null;
   }
 
+  /* Read without consuming. A written sentence outlives every redraw until the
+     reader dismisses it, the next action replaces it, or the section is left —
+     because the redraw this view cannot see is the one that would swallow it:
+     app.js answers state:change on a timer, so a slot emptied on sight is empty
+     again a tick later and the sentence never reaches the screen. */
   function flashNode(id) {
     var current = flashes[id];
-    flashes[id] = null;
     if (!current) return null;
     return Moon.UI.notice({
       kind: current.kind,
       "class": "is-" + current.kind,
       messageKey: current.key,
       params: current.params,
+      body: current.extra
+        ? line(t(current.extra.key, current.extra.params), "sm dim")
+        : null,
       dismissible: true,
-      dismissKey: "common.close"
+      dismissKey: "common.close",
+      /* Dismissing removes the node; without this the next redraw brings the
+         same sentence back and the close button reads as broken. */
+      onDismiss: function () {
+        if (flashes[id] === current) flashes[id] = null;
+      }
     });
   }
 
-  /* The router redraws on state:change, which happens inside the Model call —
-     that is, before the caller can park its sentence. So the caller parks the
-     sentence and asks for one more draw; render() is idempotent, so the extra
-     draw costs a rebuild and nothing else. */
+  /* A redraw this view asks for itself, for the paths where nothing in the
+     store changed (a refused call) and for the ones that must not wait for the
+     router's timer. render() is idempotent, so an extra draw costs a rebuild
+     and nothing else. */
   function repaint(id) {
     var view = VIEWS[id];
     var root = mounted[id];
@@ -252,8 +272,8 @@
     view.render(root);
   }
 
-  function report(id, key, params, kind) {
-    setFlash(id, key, params, kind);
+  function report(id, key, params, kind, extra) {
+    setFlash(id, key, params, kind, extra);
     repaint(id);
   }
 
@@ -275,8 +295,11 @@
         report(spec.id, "err.unknown", null, "error");
         return;
       }
-      /* The router redraws on its own, but a view that also asks for it stays
-         correct if it is ever rendered without one. */
+      /* The undo band is this action's whole report, so the sentence left over
+         from the previous one goes with the record. The router redraws on its
+         own, but a view that also asks for it stays correct if it is ever
+         rendered without one. */
+      setFlash(spec.id, null);
       repaint(spec.id);
       Moon.UI.undoStrip({
         messageKey: spec.bodyKey,
@@ -557,6 +580,121 @@
     }));
   }
 
+  /* ------------------------------------------- repetitions with no rule yet */
+
+  /* A proposal list, not an alarm. Three decisions keep it that way:
+     it speaks the dialect of the rule table above it (same header keys, same
+     cells, no colour and no mark of its own); it stays shut behind one summary
+     line until a reader asks, because the standing rule here is that a new
+     feature may not add a standing band or a screen of its own; and both of its
+     actions are one click, since each writes a rule that appears in the list
+     above and can be deleted there — a confirmation would guard nothing.
+     detectRecurring() is read without a period: promoteToRecurring stamps
+     lastGeneratedPeriod from today, so a window that ended in whatever period
+     the reader happens to be browsing would propose a rule already standing
+     behind its own first occurrence. */
+  var detectOpen = false;
+
+  function detections() {
+    if (!Moon.Model || !Moon.Model.detectRecurring) return [];
+    var rows = Moon.Model.detectRecurring();
+    if (!Array.isArray(rows)) return [];
+    /* A repetition that already has a rule is not a finding; the rule list
+       above is where it is reported, and repeating it here would ask a reader
+       to write a second rule for one payment. */
+    return rows.filter(function (row) { return row && !row.existingRuleId; });
+  }
+
+  function promote(detection, fixed) {
+    if (!Moon.Model || !Moon.Model.promoteToRecurring) return;
+    var result = Moon.Model.promoteToRecurring(detection, {
+      fixed: fixed,
+      markCategoryFixed: false
+    });
+    if (!result || !result.recurringId) {
+      report(RECURRING_ID, "err.unknown", null, "error");
+      return;
+    }
+    /* Left open on purpose: the promoted row drops out of the list by itself
+       (it has a rule now), and a reader who promoted one is usually looking at
+       the next one. */
+    detectOpen = true;
+    var marked = intOf(result.markedFixed);
+    report(RECURRING_ID, "recurring.detect.promoted", null, "info", marked > 0
+      ? { key: "recurring.detect.markedFixed", params: { count: marked } }
+      : null);
+  }
+
+  function detectionRow(found) {
+    var periods = Array.isArray(found.periods) ? found.periods.length : 0;
+    var nameCell = [line(nameOf(found), null)];
+    nameCell.push(line(t("recurring.detect.periods", { count: periods }), "sm dim"));
+    if (found.amountVaries) {
+      nameCell.push(line(t("recurring.detect.varies", {
+        amount: fmtMoney(found.amount)
+      }), "sm dim"));
+    }
+
+    var amount = [amountCell(found.amount, found.direction === "in" ? "is-in" : "is-out")];
+    amount.push(line(t(found.direction === "in"
+      ? "form.direction.in"
+      : "form.direction.out"), "sm dim"));
+
+    /* Every record behind this row is already fixed, so "write a rule and fix
+       it" would name work it cannot do. The row keeps the plain action and the
+       reader still gets the rule. */
+    var actions = [];
+    if (!found.alreadyFixed) {
+      actions.push(btn({
+        labelKey: "recurring.detect.action",
+        variant: "is-primary",
+        onClick: function () { promote(found, true); }
+      }));
+    }
+    actions.push(btn({
+      labelKey: "recurring.detect.actionPlain",
+      variant: "is-quiet",
+      onClick: function () { promote(found, false); }
+    }));
+
+    return [
+      rowHead(nameCell),
+      td(line(categoryLabel(found.categoryId), "sm dim")),
+      td(amount, true),
+      td(String(util.clamp(intOf(found.dayOfMonth) || 1, 1, 31)), true),
+      td(actionRow(actions))
+    ];
+  }
+
+  /* Returns null on a ledger that has neither rules nor findings: there the
+     empty state is already saying what to do, and one more line under it would
+     be the clutter this block exists to avoid. */
+  function detectBlock(hasRules) {
+    var rows = detections();
+    if (!rows.length && !hasRules) return null;
+
+    var box = dom.el("details", { "class": "numbers", open: detectOpen ? true : null });
+    box.appendChild(dom.el("summary", null, t("recurring.detect.title")));
+    /* The open flag is the one piece of state a reader sets by hand in this
+       view, so it outlives the redraw that state:change and lang:change bring. */
+    box.addEventListener("toggle", function () { detectOpen = !!box.open; });
+
+    if (!rows.length) {
+      box.appendChild(line(t("recurring.detect.none"), "sm dim"));
+      return box;
+    }
+
+    box.appendChild(line(t("recurring.detect.body"), "prose"));
+    box.appendChild(tableBlock([
+      th("form.name"),
+      th("ledger.col.category"),
+      th("ledger.col.amount", true),
+      th("recurring.form.dayOfMonth", true),
+      th("a11y.rowActions")
+    ], rows.map(detectionRow)));
+    return box;
+  }
+
   function openRecurringForm(rule) {
     var editing = !!rule;
     var fixedTouched = false;
@@ -746,7 +884,10 @@
         variant: "is-primary",
         onClick: function () { openRecurringForm(null); }
       }),
-      body: rules.length ? rulesTable(rules, pending) : emptyRecurring()
+      body: [
+        rules.length ? rulesTable(rules, pending) : emptyRecurring(),
+        detectBlock(rules.length > 0)
+      ]
     }));
   }
 
@@ -1328,7 +1469,12 @@
     id: RECURRING_ID,
     titleKey: "nav.recurring",
     render: renderRecurring,
-    destroy: function () { forget(RECURRING_ID); }
+    /* Leaving the section ends the errand the detect block was opened for, so
+       it comes back shut rather than standing open from a visit two days ago. */
+    destroy: function () {
+      detectOpen = false;
+      forget(RECURRING_ID);
+    }
   };
 
   Moon.Views.goals = {
