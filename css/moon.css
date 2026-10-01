@@ -452,6 +452,41 @@ h3 {
   overflow: visible;
 }
 
+/* The limit cap is the one mark on the track you can take hold of, so it is
+   the one mark drawn in the dial's own ink. Every other tick is a grey
+   hairline; this is 2px and lit, which is the whole of the invitation. The hit
+   area stays the full 44px the grip is given in views.limits.js — a thumb
+   needs that much — and only the stroke is visible inside it.
+
+   `left` is never transitioned: a drag writes it on every pointermove and the
+   cap has to sit under the finger, not trail it. */
+.meter__grip::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 2px;
+  height: 18px;
+  margin: -9px 0 0 -1px;
+  background: var(--dial);
+  transform-origin: 50% 50%;
+  transition:
+    transform var(--dur-fast) var(--ease),
+    background-color var(--dur-fast) var(--ease);
+}
+
+.meter__grip:hover::before,
+.meter__grip:focus-visible::before,
+.meter__grip:active::before {
+  transform: scaleY(1.45);
+}
+
+/* An overrun recolours its readout; the cap goes with it, or the one row that
+   is in trouble would still be wearing the calm accent. */
+.meter.is-over .meter__grip::before {
+  background: var(--over);
+}
+
 .meter__readout {
   text-align: right;
   font-size: var(--t-sm);
@@ -1605,6 +1640,40 @@ input[type="radio"] {
 
 .adapt .ledger {
   animation: moon-ink var(--dur-fast) var(--ease) calc(var(--dur-adapt) - var(--dur-fast)) both;
+}
+
+/* ------------------------------------------------------- what just changed
+   Writing an entry and dragging a limit both end in a full redraw, so there
+   is nothing left for a transition to interpolate — the nodes are new. The
+   one-shot animations below are put on exactly the thing the action moved and
+   nowhere else. Two rules keep this from turning into the every-section-
+   fades-in entrance that announces itself as decoration:
+
+   - The class is set by the action, never by the render. A redraw for any
+     other reason builds the same nodes without it, so nothing flickers while
+     the reader is doing something else.
+   - One element per action. The point is to say where to look, which only
+     works while there is a single place to look. */
+.hero__value.is-settled,
+.hero__trail.is-settled {
+  animation: moon-wipe calc(var(--dur-fast) * 1.5) var(--ease) both;
+}
+
+.meter.is-settled .meter__scale {
+  animation: moon-wipe calc(var(--dur-fast) * 1.5) var(--ease) both;
+}
+
+.meter.is-settled .meter__readout {
+  animation: moon-ink calc(var(--dur-fast) * 1.5) var(--ease) both;
+}
+
+/* Folded detail opening under a reading. The lines carry the `hidden`
+   attribute, so there is no height to interpolate and none is invented: the
+   ink rises in place and the layout settles in the same frame it always did.
+   Going from display:none to shown starts the animation by itself, which is
+   why there is no second class to toggle. */
+.is-revealed {
+  animation: moon-ink var(--dur-fast) var(--ease) both;
 }
 
 /* ------------------------------------------------------------ theme change

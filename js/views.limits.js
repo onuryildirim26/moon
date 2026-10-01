@@ -120,6 +120,12 @@
      navigates away mid-drag. */
   var dragLock = false;
 
+  /* The category whose limit was just written. The next render marks that one
+     scale and clears this, so the mark belongs to the action and never to the
+     redraw — both the Limits screen and the panel's short list read it, and
+     whichever draws first takes it. */
+  var settleId = null;
+
   /* ---------------------------------------------------------------- basics */
 
   function log(error) {
@@ -560,6 +566,10 @@
       pendingFocus = null;
       return false;
     }
+    /* Which scale the next render should redraw in front of the reader. A
+       drag ends in a full rebuild, so the bar arrives already at its new
+       length with nothing to show that it moved; this is what shows it. */
+    settleId = categoryId;
     strip(amount === null ? "limits.removed" : "limits.saved", null, function () {
       Model.setLimit(categoryId, previous);
     });
@@ -868,6 +878,10 @@
     var classes = ["meter"];
     if (over) classes.push("is-over");
     if (over && ctx.mark === "flare") classes.push("is-flare");
+    if (settleId && settleId === row.categoryId) {
+      settleId = null;
+      classes.push("is-settled");
+    }
 
     var name = dom.el("span", {
       "class": "meter__name" + (row.fixed ? " is-fixed" : ""),

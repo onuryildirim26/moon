@@ -555,6 +555,12 @@
       toggle.setAttribute("aria-expanded", detailsOpen ? "true" : "false");
       lines.forEach(function (node) {
         node.hidden = !detailsOpen;
+        /* Only the press animates. These nodes are rebuilt on every redraw
+           without the class, so opened detail that is merely redrawn sits
+           still instead of blinking behind whatever the reader is doing. */
+        if (!node.classList) return;
+        if (detailsOpen) node.classList.add("is-revealed");
+        else node.classList.remove("is-revealed");
       });
     }, false);
 
@@ -1009,8 +1015,11 @@
   };
 
   /* Set when a row has just been written: the next render hands the caret back
-     to the amount field, so a run of entries never needs the mouse. */
+     to the amount field, so a run of entries never needs the mouse — and marks
+     the hero figure, which is the number the entry just changed. The mark is
+     read once and cleared, so a redraw for any other reason is still. */
   var focusAmountNext = false;
+  var settleHero = false;
 
   /* Both of these come from the sections that own them. The panel composes;
      it does not keep a second copy of how an entry is written or how a limit is
@@ -1028,6 +1037,7 @@
              with it the caret. Ask instead: whoever draws next puts the caret
              back where the following amount goes. */
           focusAmountNext = true;
+          settleHero = true;
         }
       });
     }, null);
@@ -1062,6 +1072,7 @@
     var progress = progressOf(periodKey);
 
     root.appendChild(heroStrip(periodKey, allowance, summary, progress));
+    markSettled(root);
 
     /* Writing something down is the thing done most often, so it belongs on the
        screen that opens, under the number it changes. The row is the ledger's
@@ -1086,6 +1097,18 @@
     root.appendChild(cumulativeSection(periodKey));
     applyCssHooks(root);
     restoreCaret(root);
+  }
+
+  /* The figure the entry just moved, redrawn in front of the reader. One mark,
+     one render: the flag is cleared whether or not the strip was drawn, so it
+     can never spill onto a later redraw that nobody asked for. */
+  function markSettled(root) {
+    if (!settleHero) return;
+    settleHero = false;
+    ["hero__value", "hero__trail"].forEach(function (name) {
+      var node = root.querySelector("." + name);
+      if (node && node.classList) safe(function () { node.classList.add("is-settled"); }, null);
+    });
   }
 
   function restoreCaret(root) {
