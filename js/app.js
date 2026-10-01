@@ -41,9 +41,11 @@
     { hash: "panel", view: "panel" },
     { hash: "defter", view: "ledger" },
     { hash: "limitler", view: "limits" },
+    { hash: "yatirim", view: "investments" },
     { hash: "tekrar", view: "recurring" },
     { hash: "hedefler", view: "goals" },
     { hash: "borc", view: "debts" },
+    { hash: "hesaplar", view: "accounts" },
     { hash: "veri", view: "data" }
   ];
 
@@ -982,6 +984,34 @@
     html.classList.add("adapt");
   }
 
+  /* -------------------------------------------------------------- installing */
+
+  /* The service worker is what lets Moon open in flight mode and be installed
+     from the browser, and it is the one piece of the app that cannot run from
+     a file: URL — a worker needs an origin, and registering without one throws
+     a SecurityError. Guarding on the protocol keeps the offline copy the README
+     describes working exactly as it does today instead of logging a refusal on
+     every load.
+     Nothing on screen depends on the outcome, so a rejection is logged and
+     dropped: an app that will not draw because a cache could not be warmed is
+     worse than one that still needs the network. */
+  function registerWorker() {
+    var protocol = safe(function () { return String(global.location.protocol); }, "");
+    if (protocol !== "https:" && protocol !== "http:") return;
+
+    var worker = global.navigator ? global.navigator.serviceWorker : null;
+    if (!worker || typeof worker.register !== "function") return;
+
+    safe(function () {
+      /* Relative to the document, so the published copy under /moon/ registers
+         /moon/sw.js and takes /moon/ as its scope with nothing configured. */
+      var pending = worker.register("sw.js");
+      if (pending && typeof pending.catch === "function") {
+        pending.catch(function (error) { log(error, "serviceWorker"); });
+      }
+    });
+  }
+
   /* -------------------------------------------------------------------- boot */
 
   function onStoreError(payload) {
@@ -1111,6 +1141,7 @@
       drawNudge();
       routeNow();
       safe(adapt);
+      registerWorker();
     } catch (error) {
       fatal(error);
     }

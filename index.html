@@ -18,9 +18,9 @@
      contradicts the system, so app.js retargets the `media` of these tags (it
      never rewrites the colours) — the dark one stays first for engines that
      ignore `media`. -->
-<meta name="theme-color" data-surface="dial" media="(prefers-color-scheme: dark)" content="#0e1418">
-<meta name="theme-color" data-surface="paper" media="(prefers-color-scheme: light)" content="#e8ecef">
-<meta name="theme-color" data-surface="prism" media="not all" content="#120c24">
+<meta name="theme-color" data-surface="dial" media="(prefers-color-scheme: dark)" content="#10131F">
+<meta name="theme-color" data-surface="paper" media="(prefers-color-scheme: light)" content="#F2F3F9">
+<meta name="theme-color" data-surface="prism" media="not all" content="#120C24">
 
 <!-- Share cards are built by crawlers that do not resolve relative paths, so
      these two carry the published address. Change them if you fork this. -->
@@ -35,11 +35,18 @@
 
 <link rel="icon" href="assets/moon.svg" type="image/svg+xml">
 
+<!-- Installable from the browser on both phones: the manifest carries the
+     name, the surface colours and the 192/512 icons, and Safari ignores it and
+     reads the apple-touch-icon instead. Neither tag asks for a network at
+     runtime — they are read once, when the reader chooses to install. -->
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" sizes="180x180" href="assets/apple-touch-icon.png">
+
 <!-- The only outbound request this app makes. Delete these three tags for a
      fully offline build: the fallback stacks in tokens.css keep the layout. -->
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@75..112,400..700&family=Spectral:ital,wght@0,400;0,600;1,400&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:ital,wght@0,400..800;1,400..700&display=swap">
 
 <link rel="stylesheet" href="css/tokens.css">
 <link rel="stylesheet" href="css/moon.css">
@@ -92,9 +99,11 @@
     <a class="rail__item" href="#panel"    data-i18n="nav.panel"     data-rail="primary">Panel</a>
     <a class="rail__item" href="#defter"   data-i18n="nav.ledger"    data-rail="primary">Ledger</a>
     <a class="rail__item" href="#limitler" data-i18n="nav.limits"    data-rail="primary">Limits</a>
+    <a class="rail__item" href="#yatirim"  data-i18n="nav.investments" data-rail="primary">Investments</a>
     <a class="rail__item" href="#tekrar"   data-i18n="nav.recurring" data-rail="more">Recurring</a>
     <a class="rail__item" href="#hedefler" data-i18n="nav.goals"     data-rail="more">Goals</a>
     <a class="rail__item" href="#borc"     data-i18n="nav.debts"     data-rail="more">Debts</a>
+    <a class="rail__item" href="#hesaplar" data-i18n="nav.accounts"  data-rail="more">Accounts</a>
     <a class="rail__item" href="#veri"     data-i18n="nav.data"      data-rail="more">Data</a>
     <button class="rail__more" id="rail-more" type="button" aria-expanded="false" aria-controls="rail" data-i18n="nav.more">More</button>
   </nav>
@@ -133,6 +142,8 @@
 <script src="js/views.ledger.js"></script>
 <script src="js/views.limits.js"></script>
 <script src="js/views.plan.js"></script>
+<script src="js/views.accounts.js"></script>
+<script src="js/views.investments.js"></script>
 <script src="js/views.data.js"></script>
 <script src="js/app.js"></script>
 </body>

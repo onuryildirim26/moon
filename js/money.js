@@ -24,6 +24,13 @@
   var NARROW_NBSP = " ";        /* thin unbreakable gap before "₺" (TR) */
   var INVALID = "money.invalid";
 
+  /* Statements and spreadsheets paste the thin and unbreakable spaces in as
+     part of the number, and several of them write the minus sign as a
+     typographic dash. Both parsers in this file have to agree on what counts
+     as noise, so the two classes live here instead of inside one of them. */
+  var SPACE_NOISE = /[\s      ]/g;
+  var DASH_SIGNS = /[−‒–—]/g;
+
   var SYMBOLS = {
     TRY: "₺",
     USD: "$",
@@ -202,8 +209,8 @@
     /* Spaces (incl. NBSP and the narrow NBSP banks export) are noise here,
        and U+2212 / dashes stand in for the minus sign in some statements. */
     var s = String(text)
-      .replace(/[\s      ]/g, "")
-      .replace(/[−‒–—]/g, "-");
+      .replace(SPACE_NOISE, "")
+      .replace(DASH_SIGNS, "-");
     if (!s) return fail();
 
     var negative = false;
@@ -323,16 +330,126 @@
     return SYMBOLS[code] || code;
   }
 
+  /* ------------------------------------------------------------- quantity */
+
+  /* An investment is counted in units rather than in money: half a bitcoin,
+     1.250,75 grams of gold. The schema stores that count the way it stores an
+     amount — as an integer, here with four implied decimal places, so 0,5 is
+     5000 — because a holding multiplied by a price has to land on an exact
+     integer of kuruş, and a float quantity would put the error inside the
+     portfolio total. Four places is the precision the app promises; a fifth is
+     refused rather than rounded away, since only the reader who typed it knows
+     what they meant by it. */
+  var QUANTITY_SCALE = 10000;
+  var QUANTITY_DIGITS = 4;
+
+  var QUANTITY_INVALID = "err.quantityInvalid";
+  var QUANTITY_PRECISION = "err.quantityPrecision";
+  var QUANTITY_NEGATIVE = "err.quantityNegative";
+
+  function failQuantity(error) {
+    return { ok: false, value: null, error: error };
+  }
+
+  /* Which separator is the decimal mark, and whether a lone one is really a
+     thousands group, is decided by decimalSeparator and stripGroups above:
+     a quantity and an amount are read by the same rules, so "1.250,75" means
+     the same thing in both fields and the reader never has to learn two. */
+  function parseQuantity(text, opts) {
+    var mode = opts && opts.decimal;
+    if (mode !== "," && mode !== ".") mode = "auto";
+
+    if (text === null || text === undefined) return failQuantity(QUANTITY_INVALID);
+
+    var s = String(text)
+      .replace(SPACE_NOISE, "")
+      .replace(DASH_SIGNS, "-");
+    if (!s) return failQuantity(QUANTITY_INVALID);
+
+    /* The amount parser strips currency marks and unit words because a bank
+       exports them inside the number. A quantity arrives from Moon's own
+       field with nothing around it, so a letter there is a typo, and reading
+       past it would store a holding of the wrong size. */
+    var shape = /^([+-]?)([\d.,]*)([+-]?)$/.exec(s);
+    if (!shape) return failQuantity(QUANTITY_INVALID);
+    if (shape[1] && shape[3]) return failQuantity(QUANTITY_INVALID);
+
+    var negative = shape[1] === "-" || shape[3] === "-";
+    var body = shape[2];
+    if (!/\d/.test(body)) return failQuantity(QUANTITY_INVALID);
+
+    var decSep = decimalSeparator(body, mode);
+    var whole = body;
+    var frac = "";
+
+    if (decSep) {
+      if (occurrences(body, decSep) !== 1) return failQuantity(QUANTITY_INVALID);
+      var at = body.indexOf(decSep);
+      whole = body.slice(0, at);
+      frac = body.slice(at + 1);
+      if (!/^\d*$/.test(frac)) return failQuantity(QUANTITY_INVALID);
+    }
+
+    /* A distinct code, because "that is more precision than Moon keeps" and
+       "that is not a number" need different sentences from the view. */
+    if (frac.length > QUANTITY_DIGITS) return failQuantity(QUANTITY_PRECISION);
+
+    if (whole === "") whole = "0";
+    var wholeDigits = stripGroups(whole);
+    if (wholeDigits === null) return failQuantity(QUANTITY_INVALID);
+
+    var significant = wholeDigits.replace(/^0+/, "");
+    if (significant.length > 15) return failQuantity(QUANTITY_INVALID);
+
+    /* Padding on the string keeps the digits the reader typed: "0,5" becomes
+       5000 without ever multiplying by 10000 in floating point. */
+    while (frac.length < QUANTITY_DIGITS) frac += "0";
+    var value = Number(wholeDigits) * QUANTITY_SCALE + Number(frac);
+    if (!isSafeInt(value)) return failQuantity(QUANTITY_INVALID);
+
+    /* A negative count of units is not a short position, it is a slip of the
+       keyboard: direction lives on the entry, never on a holding's size. A
+       signed zero still passes, because it is only zero. */
+    if (negative && value !== 0) return failQuantity(QUANTITY_NEGATIVE);
+
+    return { ok: true, value: value, error: null };
+  }
+
+  /* Four places is a ceiling, not a promise, so trailing zeros are dropped:
+     one share prints as "1" and half a bitcoin as "0,5". Printing "1,0000"
+     everywhere would read as a measurement nobody made. */
+  function formatQuantity(value, opts) {
+    var o = opts || {};
+    var info = localeInfo(o.lang);
+    var units = toMinor(value);
+    var negative = units < 0;
+    var abs = negative ? -units : units;
+
+    var whole = Math.floor(abs / QUANTITY_SCALE);
+    var frac = String(abs - whole * QUANTITY_SCALE);
+    while (frac.length < QUANTITY_DIGITS) frac = "0" + frac;
+    frac = frac.replace(/0+$/, "");
+
+    /* A stored negative quantity can only come from a hand-edited file, and
+       swallowing its sign would make a broken record look sound. */
+    var text = (negative ? "-" : "") + formatWhole(whole, info);
+    return frac ? text + info.dec + frac : text;
+  }
+
   /* ----------------------------------------------------------- arithmetic */
 
   Moon.Money = {
     MINOR_SCALE: MINOR_SCALE,
     MINOR_DIGITS: MINOR_DIGITS,
+    QUANTITY_SCALE: QUANTITY_SCALE,
+    QUANTITY_DIGITS: QUANTITY_DIGITS,
 
     parse: parse,
     format: format,
     parts: parts,
     symbol: symbolFor,
+    parseQuantity: parseQuantity,
+    formatQuantity: formatQuantity,
 
     /* Integer sum. Accepts a list, an array, or a mix of both. */
     add: function () {
@@ -401,6 +518,21 @@
         }
         eq(label + ".ok", r.ok, true);
         eq(label + ".minor", r.ok ? r.minor : null, expected);
+      }
+
+      /* Quantities: a string as the expectation means "must be rejected with
+         exactly this code", because the views pick their sentence from it. */
+      function pq(input, expected, opts) {
+        var label = "parseQuantity(" + JSON.stringify(input) +
+          (opts ? "," + JSON.stringify(opts) : "") + ")";
+        var r = parseQuantity(input, opts);
+        if (typeof expected === "string") {
+          eq(label + ".ok", r.ok, false);
+          eq(label + ".error", r.error, expected);
+          return;
+        }
+        eq(label + ".ok", r.ok, true);
+        eq(label + ".value", r.ok ? r.value : null, expected);
       }
 
       /* Space classes differ between ICU versions; compare them loosely. */
@@ -504,6 +636,62 @@
       eq("divRound", Moon.Money.divRound(100, 3), 33);
       eq("divRound half", Moon.Money.divRound(101, 2), 51);
       eq("divRound zero", Moon.Money.divRound(100, 0), 0);
+
+      /* Quantities, both shapes of decimal mark. */
+      pq("0,5", 5000);
+      pq("0.5", 5000);
+      pq("1.250,75", 12507500);
+      pq("1,250.75", 12507500);
+      pq("1", 10000);
+      pq("1000", 10000000);
+      pq("0", 0);
+      pq("-0", 0);               /* a signed zero is still zero */
+      pq("1.250", 12500000);     /* three digits behind a lone separator: a group */
+
+      /* The boundary of the promised precision, and one digit past it. */
+      pq("0,0001", 1);
+      pq("1,2345", 12345);
+      pq("0,00001", QUANTITY_PRECISION);
+      pq("1,23456", QUANTITY_PRECISION);
+      pq("0.1234567", QUANTITY_PRECISION);
+
+      pq("-0,5", QUANTITY_NEGATIVE);
+      pq("5-", QUANTITY_NEGATIVE);
+      pq("", QUANTITY_INVALID);
+      pq("   ", QUANTITY_INVALID);
+      pq(null, QUANTITY_INVALID);
+      pq("abc", QUANTITY_INVALID);
+      pq("0,5 BTC", QUANTITY_INVALID);   /* unit words belong to the label */
+      pq("1.2.3", QUANTITY_INVALID);
+      pq("--5", QUANTITY_INVALID);
+      pq("999999999999999999", QUANTITY_INVALID);
+
+      /* Forced decimal mode, as the CSV wizard and a locale-bound field use it. */
+      pq("1.250,75", 12507500, { decimal: "," });
+      pq("1,250.75", 12507500, { decimal: "." });
+      pq("1,250.75", QUANTITY_INVALID, { decimal: "," });
+
+      looseEq("formatQuantity half tr", formatQuantity(5000, { lang: "tr" }), "0,5");
+      looseEq("formatQuantity half en", formatQuantity(5000, { lang: "en" }), "0.5");
+      looseEq("formatQuantity whole", formatQuantity(10000, { lang: "tr" }), "1");
+      looseEq("formatQuantity grouped tr", formatQuantity(12507500, { lang: "tr" }), "1.250,75");
+      looseEq("formatQuantity grouped en", formatQuantity(12507500, { lang: "en" }), "1,250.75");
+      looseEq("formatQuantity zero", formatQuantity(0, { lang: "tr" }), "0");
+      looseEq("formatQuantity smallest", formatQuantity(1, { lang: "tr" }), "0,0001");
+      looseEq("formatQuantity broken negative", formatQuantity(-5000, { lang: "tr" }), "-0,5");
+
+      /* The investment editor shows the stored quantity and saves back
+         whatever the reader leaves in the field, so every printed quantity
+         has to read as the integer it came from, in either language. */
+      [0, 1, 5000, 9999, 10000, 10001, 12345, 70000, 100000, 1000500,
+        12500000, 12507500, 55555000, 999999999999].forEach(function (units) {
+        ["tr", "en"].forEach(function (lang) {
+          var text = formatQuantity(units, { lang: lang });
+          var back = parseQuantity(text);
+          eq("quantity round trip " + lang + " " + units + " -> " + text,
+            back.ok ? back.value : null, units);
+        });
+      });
 
       eq("symbol TRY", symbolFor("TRY"), "₺");
       eq("symbol USD", symbolFor("USD"), "$");

@@ -154,6 +154,39 @@
     }
   }
 
+  /* What makes a backup worth taking. Categories are left out on purpose: they
+     are seeded, so counting them would mean a fresh install never reaches the
+     "nothing to back up yet" state. Everything else is something the reader
+     wrote — and since schema 2 that includes accounts and holdings, so someone
+     who has written down their balance sheet but not a single entry is no
+     longer told there is nothing here. */
+  var WRITTEN_COLLECTIONS = ["entries", "limits", "recurring", "goals", "debts",
+    "accounts", "investments"];
+
+  function writtenCount() {
+    var st = store();
+    var state = st ? st.state : null;
+    if (!state) return 0;
+    var total = 0;
+    WRITTEN_COLLECTIONS.forEach(function (name) {
+      if (Array.isArray(state[name])) total += state[name].length;
+    });
+    return total;
+  }
+
+  /* A plain count, grouped the way the reader's language groups thousands. The
+     catalogue interpolates counts raw, which is right inside a sentence; a
+     figure standing on its own beside a label reads better grouped. */
+  function fmtCount(value) {
+    var n = typeof value === "number" && isFinite(value) ? Math.max(0, Math.round(value)) : 0;
+    var tag = lang() === "en" ? "en-US" : "tr-TR";
+    try {
+      return new global.Intl.NumberFormat(tag).format(n);
+    } catch (error) {
+      return String(n);
+    }
+  }
+
   function categoryOptions(kind) {
     var m = model();
     if (!m || typeof m.categories !== "function") return [];
@@ -1441,7 +1474,7 @@
   function backupSection() {
     var body = [];
     var s = settings();
-    var count = entryCount();
+    var count = writtenCount();
 
     if (!count) {
       body.push(Moon.UI && Moon.UI.emptyState
@@ -1503,6 +1536,39 @@
 
   /* -------------------------------------------------------------- restore */
 
+  /* data.restore.done names entries and categories itself. Everything else the
+     store counted is read as a label and a figure beside it, because the
+     catalogue has no sentence that counts an account or a holding and writing
+     one here would put English into the Turkish build.
+
+     The labels are the nav names, not the section titles: the pill says where
+     those records now live, and six of the long titles ("Tekrarlayan ödemeler")
+     take six lines on a 375px screen where six nav names take two. Order
+     follows the store's own export order. */
+  var RESTORE_READINGS = [
+    { name: "limits", labelKey: "nav.limits" },
+    { name: "recurring", labelKey: "nav.recurring" },
+    { name: "goals", labelKey: "nav.goals" },
+    { name: "debts", labelKey: "nav.debts" },
+    { name: "accounts", labelKey: "nav.accounts" },
+    { name: "investments", labelKey: "nav.investments" }
+  ];
+
+  function countOf(counts, name) {
+    var value = counts ? counts[name] : null;
+    return typeof value === "number" && isFinite(value) ? value : 0;
+  }
+
+  /* One small pill: the name of a collection and how many of it arrived. The
+     figure gets .tnum and nothing else — weight and colour belong to the
+     stylesheet, and .tag already dresses both halves. */
+  function countTag(labelKey, value) {
+    return el("span", { "class": "tag" }, [
+      el("span", { text: t(labelKey) }),
+      el("span", { "class": "tnum", text: fmtCount(value) })
+    ]);
+  }
+
   function readRestoreFile(file) {
     if (!file) return;
     rst.name = file.name || null;
@@ -1561,11 +1627,22 @@
           : ((result && result.error) || "err.importBadFile");
         rst.done = null;
       } else {
+        var counts = result.counts;
         rst.errorKey = null;
         rst.done = {
-          entries: (result.counts && result.counts.entries) || 0,
-          categories: (result.counts && result.counts.categories) || 0,
-          skipped: (result.counts && result.counts.skipped) || 0
+          entries: countOf(counts, "entries"),
+          categories: countOf(counts, "categories"),
+          skipped: countOf(counts, "skipped"),
+          /* Both come from the store's normalize pass and are part of every
+             answer, zero included. Printing only what arrived would hide that
+             the file held more than this install could read. */
+          repaired: countOf(counts, "repaired"),
+          dropped: countOf(counts, "dropped"),
+          readings: RESTORE_READINGS.map(function (spec) {
+            return { labelKey: spec.labelKey, count: countOf(counts, spec.name) };
+          }).filter(function (reading) {
+            return reading.count > 0;
+          })
         };
         rst.text = null;
         rst.name = null;
@@ -1601,8 +1678,30 @@
         messageKey: "data.restore.done",
         params: { entries: rst.done.entries, categories: rst.done.categories }
       }));
+      /* Under the band rather than inside it: the band's text column is 18ch
+         wide and shares the row with its actions, so pills put in there get one
+         per line. .form__actions is this file's wrapping row with a gap, and a
+         row of readings wants exactly the shape a row of buttons wants. */
+      if (rst.done.readings.length) {
+        body.push(el("div", { "class": "form__actions" },
+          rst.done.readings.map(function (reading) {
+            return countTag(reading.labelKey, reading.count);
+          })));
+      }
       if (rst.done.skipped) {
         body.push(small(t("data.restore.skipped", { count: rst.done.skipped })));
+      }
+      if (rst.done.repaired) {
+        body.push(small(t("data.restore.repaired", { count: rst.done.repaired })));
+      }
+      /* Dropped rows are data the reader had and no longer has, so they get a
+         band of their own instead of a quiet line under the summary. */
+      if (rst.done.dropped) {
+        body.push(band({
+          kind: "warn",
+          messageKey: "data.restore.dropped",
+          params: { count: rst.done.dropped }
+        }));
       }
     }
 

@@ -14,6 +14,11 @@
  *     the limit under the finger. It is one pointer path for mouse and touch
  *     alike, it carries role="slider" with its own aria values, and the arrow
  *     keys do the same job, so the drag is an ADDITION and never the only way.
+ *   - a category's colour and icon (§3.4) are picked in place as well, from a
+ *     swatch and an emoji grid that fold out of the row's own face. They are
+ *     the only controls here that are folded rather than standing, because ten
+ *     colour dots and forty glyphs on every row at once is a screen with no
+ *     category list left on it.
  *   - category management (rename, fix, archive) is inline too: the name is an
  *     inlineValue, the two marks are pressed buttons. Deleting a category asks
  *     nothing and offers an eight-second undo band instead, because nothing is
@@ -73,7 +78,15 @@
      starts at labelWidth + 4. We pass no labelWidth, so it is 0. The spill is
      allowed max(12, readoutWidth - 8) and the scale only renormalises above
      150% — above that one unit of track is worth (track + spill) / ratio.
-     This is the whole conversion the drag needs: pixel -> ratio -> amount. */
+     This is the whole conversion the drag needs: pixel -> ratio -> amount.
+
+     Re-derived against the redrawn meter, because the bar is now a rounded
+     progress bar in a 24-unit box rather than the 44-unit vernier these
+     numbers were first read off: the viewBox is still 0 0 380 24 and the cap
+     is still at x0 + unit, measured out of the markup at ratios 0, 0.25, 0.72,
+     1, 1.18, 1.5, 1.6, 2 and 3.2 (244 while the scale holds, then 231.5, 186
+     and 117.75). Nothing horizontal moved. What did move is vertical, and that
+     is handled at GRIP_PX. */
   var VIEW_WIDTH = TRACK_WIDTH + READOUT_WIDTH + 8;
   var TRACK_X0 = 4;
   var MAX_SPILL = Math.max(12, READOUT_WIDTH - 8);
@@ -85,7 +98,15 @@
   var STEP_FINE = 1000;
   var FINE_BELOW = 50000;
 
-  /* A finger is not a pixel: the grip is a 44px target centred on a 1px cap. */
+  /* A finger is not a pixel: the grip is a 44px target centred on the cap, in
+     both directions. The height has to be said out loud now that the meter is
+     24 units tall: the track is as tall as the SVG draws itself, which at a
+     240px column is about fifteen pixels, so a grip pinned to the track's top
+     and given a 44px minimum sits its stroke a dozen pixels and more BELOW the
+     bar it is supposed to be holding — measured at 12.2px on a 375px screen.
+     Centred on the track, the stroke
+     (.meter__grip::before, itself at top:50%) lands on the bar's own centre
+     line, because charts.js centres the bar in the viewBox. */
   var GRIP_PX = 44;
 
   /* The suggestion block (Moon.Model.suggestLimits) is asked for, never
@@ -115,6 +136,15 @@
      write brings with it. */
   var addMemory = { kind: "expense", fixed: false };
 
+  /* Which category has its colour and icon open (§3.4). One at a time, which
+     is why this is an id and not a map: ten 40px dots and a forty-glyph grid
+     is four hundred pixels of picker, and eight of those above a list of eight
+     categories is a screen with no list left on it. Like the suggestion block
+     it survives the redraw a write brings with it, so picking a colour does
+     not fold the row the reader is still dressing. */
+  var APPEARANCE_ID = "limits-appearance";
+  var appearanceId = null;
+
   /* True only while a pointer is dragging a grip: text selection is turned off
      on <html> for that time and has to be turned back on even if the reader
      navigates away mid-drag. */
@@ -127,6 +157,20 @@
   var settleId = null;
 
   /* ---------------------------------------------------------------- basics */
+
+  /* The CSS value a row paints its category's colour from. A record stores a
+     plain hex so an export keeps meaning the same thing, while Dawn darkens all
+     ten spectrum colours to clear contrast on white — UI.tone resolves the one
+     into the other, and writing the hex straight in would show a reader on Dawn
+     a different colour from the one they picked in the swatch. */
+  function toneOf(color) {
+    var UI = Moon.UI;
+    if (UI && typeof UI.tone === "function") {
+      var resolved = UI.tone(color);
+      if (resolved) return resolved;
+    }
+    return color || "";
+  }
 
   function log(error) {
     if (global.console && global.console.error) {
@@ -496,6 +540,33 @@
     return !!row && row.limit !== null && row.limit !== undefined && row.limit > 0;
   }
 
+  /* ------------------------------------------------------------ appearance */
+
+  /* A budget row carries the figures and nothing else: Moon.Model.budgetRows
+     answers with the money, and §3.4 keeps the colour and the icon on the
+     category record. The store fills both in on every read, so a row that has
+     a category has a colour and an icon — this is a lookup, never a default. */
+  function categoryOf(categoryId) {
+    if (!categoryId) return null;
+    return read("categoryById", categoryId, null);
+  }
+
+  /* The one glyph that is not prose. The store keeps it for a record that
+     arrived without an icon, and reading the constant rather than writing the
+     bullet twice is what keeps the two from drifting. */
+  function fallbackIcon() {
+    var Store = Moon.Store;
+    return (Store && Store.FALLBACK_ICON) || "•";
+  }
+
+  /* Colour is normalised to uppercase on its way into a record, so a swatch
+     that offered "#8aa6ff" would never read back as equal to itself. */
+  function sameText(a, b) {
+    var left = a === null || a === undefined ? "" : String(a);
+    var right = b === null || b === undefined ? "" : String(b);
+    return left.toUpperCase() === right.toUpperCase();
+  }
+
   /* ---------------------------------------------------------- focus stamps */
 
   function focusTag(kind, id) {
@@ -682,11 +753,11 @@
       "aria-orientation": "horizontal",
       style: {
         position: "absolute",
-        top: "0",
-        bottom: "0",
+        top: "50%",
         width: GRIP_PX + "px",
-        "min-height": GRIP_PX + "px",
+        height: GRIP_PX + "px",
         "margin-left": (-GRIP_PX / 2) + "px",
+        "margin-top": (-GRIP_PX / 2) + "px",
         cursor: "ew-resize",
         /* Without this a touch drag scrolls the page instead. */
         "touch-action": "none"
@@ -866,7 +937,20 @@
       log(error);
       return null;
     }
-    return dom.svg(markup);
+
+    var node = dom.svg(markup);
+    /* The third seam, and the one that moved the cap. charts.js names this svg
+       "chart meter", and since the restyle moon.css spends .meter on the limit
+       CARD — surface, border, shadow, 56px minimum, 8px/16px padding and a 4px
+       --tone edge. Worn by the drawing, that padding shrinks the SVG viewport
+       to 370 of the 403 pixels the row gives it, so the viewBox is letterboxed
+       and centred and every x inside it lands 4.7px left of where a plain
+       percentage of the box puts the grip. Dropping the class the drawing
+       should never have had puts the two back on the same pixel (measured: dx
+       0.01px) and takes 14px off every row. Neither charts.js nor moon.css is
+       ours; which of them should stop saying "meter" is for the owner. */
+    if (node && node.classList) node.classList.remove("meter");
+    return node;
   }
 
   /* One row: name, scale, reading. Nothing wraps it any more — the row used to
@@ -883,11 +967,29 @@
       classes.push("is-settled");
     }
 
+    /* The category's own two marks (§3.4). The colour goes on the row as the
+       one name every rule reads back — moon.css paints the card's edge from it
+       and the redrawn Charts.meter fills the bar with it — and the icon goes
+       in front of the name, where a reader picking a row out of nine finds it
+       before they have read a word. The glyph is hidden from the
+       accessibility tree because the meter's own aria-label already names the
+       category; read aloud it would only say the same thing twice. It carries
+       its gap inline: the stylesheet has no class for a mark inside
+       .meter__name and §10 forbids inventing one. */
+    var dress = categoryOf(row.categoryId);
+    var nameKids = [];
+    if (dress && dress.icon) {
+      nameKids.push(dom.el("span", {
+        "aria-hidden": "true",
+        style: { "margin-right": "6px" }
+      }, dress.icon));
+    }
+    nameKids.push(row.name);
+
     var name = dom.el("span", {
       "class": "meter__name" + (row.fixed ? " is-fixed" : ""),
-      title: row.name,
-      text: row.name
-    });
+      title: row.name
+    }, nameKids);
 
     var middle = dom.el("span", { "class": "meter__scale" });
     var readout = dom.el("span", { "class": "meter__readout" });
@@ -918,7 +1020,9 @@
     var drift = hasLimit(row) ? driftText(row) : "";
     if (drift) readout.appendChild(dom.el("span", { "class": "meter__drift", text: drift }));
 
-    return dom.el("div", { "class": classes.join(" ") }, [name, middle, readout]);
+    var attrs = { "class": classes.join(" ") };
+    if (dress && dress.color) attrs.style = { "--tone": toneOf(dress.color) };
+    return dom.el("div", attrs, [name, middle, readout]);
   }
 
   function scaleList(rows, ctx) {
@@ -1353,6 +1457,146 @@
     return leftAlign(api);
   }
 
+  /* ------------------------------------------------ the colour and the icon */
+
+  /* Written the way toggleArchived writes: one patch, no band. A colour is not
+     a figure, and offering to undo one would put a strip on screen for every
+     dot the reader tries — the ring that moved to the dot they picked, and the
+     scale above that changed colour with it, are the whole confirmation.
+     The value is read back before this answers true because updateCategory
+     reports the id it found, not the fields it understood: a picker left
+     showing a colour the record never took would be telling the reader
+     something that will be gone on the next reload. */
+  function writeAppearance(cat, patch, focus) {
+    var Model = model();
+    if (!Model || typeof Model.updateCategory !== "function") return false;
+
+    /* The stamp is set whether or not the patch lands, because either way the
+       write redraws this section out from under the control the reader just
+       pressed, and a refusal that also took the caret away would be two
+       things going wrong instead of one. */
+    pendingFocus = focus;
+    Model.updateCategory(cat.id, patch);
+
+    var fresh = categoryOf(cat.id) || {};
+    var fields = Object.keys(patch);
+    for (var i = 0; i < fields.length; i += 1) {
+      if (!sameText(fresh[fields[i]], patch[fields[i]])) return false;
+    }
+    return true;
+  }
+
+  /* The focus comes back to the dot that was picked, not to the group holding
+     it, because the redraw that follows the write builds ten new buttons and
+     the reader's next move is usually the next colour along. A colour outside
+     the offered ten stamps the first dot, which is where pickGroup parks the
+     tab stop when nothing matches. */
+  function stampDot(api, cat) {
+    var dots = api.dots || [];
+    var colors = api.colors();
+    var place = 0;
+    for (var i = 0; i < colors.length; i += 1) {
+      if (sameText(colors[i], cat.color)) place = i;
+    }
+    if (dots[place]) stamp(dots[place], focusTag("color", cat.id));
+  }
+
+  function colorPicker(cat) {
+    var UI = Moon.UI;
+    if (!UI || typeof UI.swatch !== "function") return null;
+    var api;
+    try {
+      api = UI.swatch({
+        value: cat.color,
+        /* form.color is the key this control wants and the catalogue does not
+           carry it yet. Until it does, the group is named after the record it
+           dresses rather than after a word invented here: "Market, radio
+           group" is thin, but it is true and it is the reader's own text. */
+        labelKey: key("form.color", null),
+        label: cat.name,
+        onPick: function (hex) {
+          if (!writeAppearance(cat, { color: hex }, focusTag("color", cat.id))) {
+            api.set(cat.color);
+          }
+        }
+      });
+    } catch (error) {
+      log(error);
+      return null;
+    }
+    stampDot(api, cat);
+    return api.element;
+  }
+
+  function iconPicker(cat) {
+    var UI = Moon.UI;
+    if (!UI || typeof UI.emojiPicker !== "function") return null;
+    var api;
+    try {
+      api = UI.emojiPicker({
+        value: cat.icon,
+        /* Folded, so the forty glyphs cost one control and no tab stops until
+           they are asked for. ui.js names the toggle from form.icon when the
+           catalogue grows it and from common.more until then; borrowing its
+           fallback keeps one answer to the gap rather than two. */
+        id: APPEARANCE_ID + "-icon",
+        labelKey: key("form.icon", null),
+        onPick: function (icon) {
+          if (!writeAppearance(cat, { icon: icon }, focusTag("icon", cat.id))) {
+            api.set(cat.icon);
+          }
+        }
+      });
+    } catch (error) {
+      log(error);
+      return null;
+    }
+    stamp(api.control, focusTag("icon", cat.id));
+    return api.element;
+  }
+
+  /* The row's own face IS the control that changes it: the colour as the dot
+     .tag draws from --tone, the icon as the glyph beside it. Pressing it
+     unfolds the two pickers in a row of their own underneath. */
+  function appearanceToggle(cat) {
+    var open = appearanceId === cat.id;
+    var face = dom.el("span", {
+      "class": "tag",
+      "aria-hidden": "true",
+      style: { "--tone": toneOf(cat.color) || "var(--accent)" }
+    }, cat.icon || fallbackIcon());
+
+    var node = dom.el("button", {
+      type: "button",
+      "class": "btn is-quiet",
+      "aria-expanded": open ? "true" : "false",
+      "aria-label": tk("limits.category.appearance", "common.details")
+    }, face);
+    /* Only while the row is on the page, for the same reason suggestToggle
+       only points at its block while the block exists. */
+    if (open) node.setAttribute("aria-controls", APPEARANCE_ID);
+
+    node.addEventListener("click", guard(function () {
+      appearanceId = open ? null : cat.id;
+      pendingFocus = focusTag("dress", cat.id);
+      redraw();
+    }));
+    stamp(node, focusTag("dress", cat.id));
+    return node;
+  }
+
+  /* A row spanning the table, because the swatch is ten 40px targets: given a
+     column of its own it would push the name, the kind and the actions off a
+     phone, and it is wanted on one row at a time anyway. .form__actions is the
+     house row for a set of controls and wraps the dots by itself. */
+  function appearanceRow(cat, columns) {
+    var kids = [colorPicker(cat), iconPicker(cat)].filter(Boolean);
+    if (!kids.length) return null;
+    return dom.el("tr", { id: APPEARANCE_ID }, dom.el("td", {
+      colspan: String(columns)
+    }, dom.el("div", { "class": "form__actions" }, kids)));
+  }
+
   /* Flipping the fixed mark moves money in and out of the daily-allowance pool,
      so the change says so in the strip and can be taken straight back. */
   function toggleFixed(cat) {
@@ -1439,6 +1683,10 @@
     var row = dom.el("tr");
 
     var nameHead = dom.el("th", { scope: "row", "class": cat.archived ? "dim" : "" });
+    /* In front of the name, where the same two marks stand on every scale row
+       above. Both the toggle and the reading are inline, so the row is no
+       taller than it was before the category had a face. */
+    nameHead.appendChild(appearanceToggle(cat));
     var iv = nameCell(cat);
     if (iv) nameHead.appendChild(iv.element);
     else nameHead.appendChild(dom.el("span", { title: cat.name, text: cat.name }));
@@ -1486,17 +1734,24 @@
   }
 
   function categoryTable(cats, host) {
-    var table = dom.el("table", { "class": "table" });
-    table.appendChild(dom.el("thead", null, dom.el("tr", null, [
+    var heads = [
       headCell(t("form.name")),
       headCell(t("form.kind")),
       headCell(t("common.fixed")),
       headCell(t("a11y.rowActions"))
-    ])));
+    ];
+    var table = dom.el("table", { "class": "table" });
+    table.appendChild(dom.el("thead", null, dom.el("tr", null, heads)));
 
     var body = dom.el("tbody");
     cats.forEach(function (cat) {
       body.appendChild(categoryRow(cat, host));
+      /* Straight after the row it belongs to, so reading order and tab order
+         are the same order the reader sees. Only one row is ever open. */
+      if (appearanceId === cat.id) {
+        var dress = appearanceRow(cat, heads.length);
+        if (dress) body.appendChild(dress);
+      }
     });
     table.appendChild(body);
     return dom.el("div", { "class": "preview" }, table);
@@ -1645,12 +1900,15 @@
          What does have to go: the cached root (redrawing into a root the router
          has handed to another view would paint this section over it), the
          suggestion block, which is a transient answer to "suggest me limits",
-         and the selection lock, which a reader who navigated away mid-drag
-         would otherwise carry into the next section. */
+         the open colour and icon pickers, which are a transient answer to
+         "what does this category look like", and the selection lock, which a
+         reader who navigated away mid-drag would otherwise carry into the next
+         section. */
       lastRoot = null;
       suggestOpen = false;
       suggestPicks = null;
       appliedCount = 0;
+      appearanceId = null;
       pendingFocus = null;
       if (dragLock) setDragLock(false);
     }

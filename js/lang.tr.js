@@ -46,6 +46,8 @@
     "nav.recurring": "Tekrar",
     "nav.goals": "Hedefler",
     "nav.debts": "Borç",
+    "nav.accounts": "Hesaplar",
+    "nav.investments": "Yatırımlar",
     "nav.data": "Veri",
     "nav.more": "Daha",
 
@@ -83,8 +85,16 @@
     "common.language": "Dil",
     "common.theme": "Tema",
     "common.theme.system": "Sistem",
-    "common.theme.dial": "Kadran",
-    "common.theme.paper": "Kâğıt",
+    /* Buradaki anahtar saklanan değerin adıdır, gösterilen kelimenin değil, ve
+       §2.2 iki yüzeyi yeniden adlandırırken saklanan dial ile paper değerlerine
+       dokunmadı: eski bir sürümün yazdığı ayar hâlâ okunuyor. Dolayısıyla dial
+       artık Gece, paper artık Şafak diye okunur. .night ve .dawn aynı
+       kelimeleri bundan sonra kullanılacak adlarla taşıyor, böylece tema
+       denetimi hangi anahtarı çağırırsa çağırsın ekranda aynı şey yazıyor. */
+    "common.theme.dial": "Gece",
+    "common.theme.paper": "Şafak",
+    "common.theme.night": "Gece",
+    "common.theme.dawn": "Şafak",
     "common.theme.prism": "Prizma",
     "common.lang.tr": "Türkçe",
     "common.lang.en": "İngilizce",
@@ -217,6 +227,10 @@
     /* --------------------------------------------------------- limits ---- */
 
     "limits.title": "Limitler",
+    /* Satırın yüzü aynı zamanda onu değiştiren düğme: basıldığında renk ve
+       simge seçicileri açılıyor. Adı açılan şeyi söylüyor, çünkü düğmenin
+       üstünde okunacak bir yazı değil tek bir nokta ve bir glif var. */
+    "limits.category.appearance": "Renk ve simge",
     "limits.category.archive": "Arşivle",
     "limits.category.unarchive": "Arşivden çıkar",
     "limits.category.removed": "{name} silindi, {count} kayıt Diğer'e taşındı.",
@@ -360,6 +374,115 @@
     "debts.delete.title": "Kayıt silinsin mi?",
     "debts.delete.body": "Bu borç kaydı silinir. Defterdeki harcamalara dokunulmaz.",
     "debts.note": "Borç ve alacak günlük pay ve limit hesabına girmez.",
+
+    /* ------------------------------------------------------- accounts ---- */
+
+    "accounts.title": "Hesaplar",
+    "accounts.name": "Hesap adı",
+    /* Adı okunamayan bir kaydı onarırken Store bir ad yazmak zorunda; boş ad
+       kartı adsız bir başkasından ayırt edilemez hâle getirir. Buradaki metin
+       kaydın adsız geldiğini söyler, kategorilerin "Sınıflandırılmamış"ı
+       bir hesaba yanlışlıkla uymaz. */
+    "accounts.untitled": "Adsız hesap",
+    "accounts.balance": "Bakiye",
+    /* UI.inlineValue labelKey'i aria-label'a çevirir; aria-label altındaki
+       yazının yerine geçer, ona eklenmez. Bu yüzden bu iki metin okumanın
+       kendisini taşır: taşımazsa denetim yalnız ne olduğunu söyler, okuyucunun
+       aradığı sayıyı düşürür. */
+    "accounts.name.edit": "Hesap adını değiştir: {name}",
+    "accounts.balance.edit": "Bakiyeyi değiştir: {amount}",
+    "accounts.opening": "Açılış bakiyesi",
+    "accounts.opening.hint": "Kayıtlar bu tutarın üstüne eklenir. Kredi kartı için eksi yazabilirsin.",
+    "accounts.total": "Hesap toplamı {amount}",
+    /* Kart hangi dönem başlıkta duruyorsa onun hareketini çizer, ille içinde
+       bulunduğumuz ay değil. Bir ay adı geçerse Eylül'e geri gidildiğinde
+       Eylül'ün hareketi "bu ay" diye yazılır; cümle hiçbir dönemi adıyla
+       anmadan her dönem için doğru kalıyor. */
+    "accounts.flow": "Bu dönem {in} girdi, {out} çıktı.",
+    "accounts.flow.none": "Bu dönem bu hesapta hareket yok.",
+    "accounts.kind.cash": "Nakit",
+    "accounts.kind.bank": "Banka",
+    "accounts.kind.card": "Kredi kartı",
+    "accounts.kind.savings": "Birikim",
+    "accounts.form.title.new": "Hesap ekle",
+    "accounts.form.title.edit": "Hesabı düzenle",
+    "accounts.form.submit": "Hesabı ekle",
+    "accounts.form.submit.edit": "Hesabı güncelle",
+    "accounts.addChip": "Hesap ekle",
+    "accounts.archive": "Arşivle",
+    "accounts.unarchive": "Arşivden çıkar",
+    "accounts.archived": "Arşivde",
+    "accounts.delete.title": "Hesap silinsin mi?",
+    "accounts.delete.body": "Hesap silinir, kayıtlar kalır. Bu hesaba bağlı kayıtlar defterde durur, yalnız hesap bağlantıları kalkar.",
+    "accounts.saved": "Hesap kaydedildi.",
+    "accounts.removed": "{name} silindi, {count} kaydın hesap bağlantısı kalktı.",
+    "accounts.removed.one": "{name} silindi, {count} kaydın hesap bağlantısı kalktı.",
+    "accounts.removed.other": "{name} silindi, {count} kaydın hesap bağlantısı kalktı.",
+    "accounts.empty.heading": "Henüz hesap yok.",
+    "accounts.empty.body": "Parayı nerede tuttuğunu yaz: nakit, banka, kart, birikim. Bakiyeleri burada toplar, toplam varlığına eklerim.",
+    "accounts.empty.action": "İlk hesabı ekle",
+
+    /* ---------------------------------------------------- investments ---- */
+
+    "investments.title": "Yatırımlar",
+    "investments.name": "Varlık adı",
+    /* Hesaplardaki adsız kaydın yatırım tarafındaki eşi; bir yatırımı hesap
+       diye adlandırmamak için kendi metni var. */
+    "investments.untitled": "Adsız yatırım",
+    "investments.quantity": "Miktar",
+    "investments.quantity.hint": "En çok dört ondalık basamak okunur; 0,5 gibi yazabilirsin.",
+    "investments.unitCost": "Birim maliyet",
+    "investments.unitCost.hint": "Bir birimi kaça aldın.",
+    "investments.unitPrice": "Birim fiyat",
+    "investments.unitPrice.hint": "Bir birimin bugünkü fiyatı. Fiyatı sen girersin, Moon ağa çıkmaz.",
+    "investments.value": "Değer",
+    "investments.cost": "Maliyet",
+    "investments.gain": "Getiri",
+    "investments.gainPct": "%{pct}",
+    "investments.gainLine": "Getiri {amount}, %{pct}",
+    "investments.qtyLine": "{quantity} × {price}",
+    "investments.priceDate": "Fiyat {date} tarihinde güncellendi.",
+    "investments.updatePrice": "Fiyatı güncelle",
+    "investments.priceSaved": "Yeni fiyat kaydedildi.",
+    "investments.byKind": "Türe göre dağılım",
+    "investments.byKind.row": "{name}, {amount}, toplamın %{pct} kadarı",
+    "investments.chart.none": "Değer izi için en az iki fiyat gerekir. İkinci fiyatı girdiğin an grafik burada çizilir.",
+    "investments.kind.stock": "Hisse",
+    "investments.kind.fund": "Fon",
+    "investments.kind.crypto": "Kripto",
+    "investments.kind.gold": "Altın",
+    "investments.kind.fx": "Döviz",
+    "investments.kind.property": "Gayrimenkul",
+    "investments.kind.other": "Diğer",
+    "investments.form.title.new": "Yatırım ekle",
+    "investments.form.title.edit": "Yatırımı düzenle",
+    "investments.form.submit": "Yatırımı ekle",
+    "investments.form.submit.edit": "Yatırımı güncelle",
+    /* Arşiv eylemleri hesaplardaki kardeşleriyle aynı kelimeleri kullanıyor
+       ama kendi anahtarlarını taşıyor: bir dilde yatırım için başka bir fiil
+       gerekirse hesap kartlarının metni onunla birlikte değişmesin. */
+    "investments.archive": "Arşivle",
+    "investments.unarchive": "Arşivden çıkar",
+    "investments.archived": "Arşivde",
+    "investments.delete.title": "Yatırım silinsin mi?",
+    "investments.delete.body": "Yatırım ve fiyat geçmişi silinir. Defterdeki kayıtlara dokunulmaz.",
+    "investments.saved": "Yatırım kaydedildi.",
+    "investments.removed": "{name} silindi.",
+    "investments.empty.heading": "Henüz yatırım yok.",
+    "investments.empty.body": "Elindekini yaz: hisse, fon, altın, döviz, ev. Miktarı ve birim fiyatı verirsen değerini ölçer, toplam varlığına eklerim.",
+    "investments.empty.action": "İlk yatırımı ekle",
+
+    /* ------------------------------------------------------- networth ---- */
+
+    "networth.label": "Toplam varlık",
+    "networth.assets": "Varlıklar",
+    "networth.liabilities": "Borçlar",
+    "networth.cash": "Nakit",
+    "networth.investments": "Yatırım",
+    "networth.owedToMe": "Alacak",
+    "networth.iOwe": "Borç",
+    "networth.day": "{dayIndex}/{days} gün",
+    "networth.empty": "Toplam varlık henüz ölçülmedi. Bir hesap ya da yatırım yazdığın an burada görünür; ölçülmemiş bir sayıyı sıfır diye yazmıyorum.",
 
     /* ----------------------------------------------------------- data ---- */
 
@@ -536,6 +659,11 @@
     "form.fixed": "Sabit ödeme",
     "form.name": "Ad",
     "form.kind": "Tür",
+    /* Renk seçicinin radio grubunun ve simge seçicinin katlanma düğmesinin
+       adı. İkisi de üstlerinde yazı taşımıyor — biri on nokta, öteki tek bir
+       glif — bu yüzden adı yalnız buradan geliyor. */
+    "form.color": "Renk",
+    "form.icon": "Simge",
     "form.startDate": "Başlangıç",
     "form.endDate": "Bitiş",
     "form.endDate.hint": "Boş bırakırsan süresiz.",
@@ -554,6 +682,10 @@
     "err.badAmount": "Tutar okunamadı. Rakam, virgül ya da nokta kullan; harf ve boşluk okunmuyor.",
     "err.zeroAmount": "Tutar sıfır. Sıfırlık kayıt ölçülemez; gerçek tutarı yaz.",
     "err.negativeAmount": "Tutar eksi yazılmış. Yön Gider ve Gelir alanından seçilir, tutar artı kalır.",
+    "err.quantityInvalid": "Miktar okunamadı. En çok dört ondalık basamak okunur; 0,5 ya da 12,3456 gibi yaz.",
+    "err.quantityPrecision": "Miktarda dört ondalık basamaktan fazlası var. Fazlası yuvarlanıp sessizce kaybolmasın diye kabul edilmiyor; dört basamağa kısaltıp yaz.",
+    "err.quantityNegative": "Miktar eksi yazılmış. Elinde ne kadar varsa artı olarak yazılır; sattığın kadarını düşmek için miktarı küçült.",
+    "err.priceRequired": "Birim fiyat boş. Fiyat olmadan değer ölçülemez; bir birimin bugünkü fiyatını yaz.",
     "err.tooLong": "Metin çok uzun. En çok {max} karakter saklanıyor; kısaltıp tekrar dene.",
     "err.noteTooLong": "Açıklama çok uzun. En çok 200 karakter saklanıyor; kısaltıp tekrar dene.",
     "form.dateHint": "Gün, ay, yıl. Takvimden de seçebilirsin.",
@@ -620,6 +752,7 @@
     "a11y.rail": "Bölümler",
     "a11y.railMore": "Diğer bölümler",
     "a11y.strip": "Duyurular ve geri alma",
+    "a11y.accounts": "Hesaplar ve bakiyeleri",
     "a11y.periodPrev": "Önceki dönem",
     "a11y.periodNext": "Sonraki dönem",
     "a11y.periodCurrent": "Gösterilen dönem {period}",
@@ -633,6 +766,9 @@
     "a11y.chart.flow.desc": "Dönemin her günü için tek çubuk. Toplam gelir {in}, toplam gider {out}.",
     "a11y.chart.cumulative.desc": "Dönem başından bugüne toplam gider {total}, aynı güne düşen hız değeri {pace}.",
     "a11y.chart.year.desc": "Son on iki dönem ve {rows} kategori. Yoğunluk çizgi sıklığıyla verilir.",
+    /* Değer izinin kendi <desc> metni. Bir değer grafiğinin cevapladığı soru
+       "şimdi ne kadar" olduğu için en yeni okumayı söylüyor. */
+    "a11y.chart.value.desc": "Yatırımlarının zaman içindeki değeri. En yeni okuma {date} günü {amount}.",
     "a11y.chart.point": "{date}, {amount}",
     "a11y.chart.pointPct": "{name}, {amount}, toplamın %{pct} kadarı",
     "a11y.langChanged": "Dil {lang} olarak değişti.",

@@ -1,10 +1,10 @@
 /* Moon — the panel (#panel), the first screen.
  *
- * One strip and three sections, in reading order: the measurement strip
- * (hero), the limit scales, then the two time charts. Everything on screen is
- * derived by Moon.Model; this file owns structure, labels and the keyboard
- * readout line, and writes nothing except when the reader presses the button
- * on the pending-recurring band.
+ * One card, one strip and three sections, in reading order: the net-worth card
+ * with its account chips, the measurement strip (hero), the limit scales, then
+ * the two time charts. Everything on screen is derived by Moon.Model; this file
+ * owns structure, labels and the keyboard readout line, and writes nothing
+ * except when the reader presses the button on the pending-recurring band.
  *
  * Four rules shape the code below:
  *   - Idempotent. The router re-renders on state:change and lang:change, so
@@ -36,7 +36,13 @@
      allowed to spill into the readout column because these two agree. */
   var METER_TRACK = 240;
   var METER_READOUT = 132;
-  var METER_HEIGHT = 44;
+
+  /* charts.js draws a 24-unit meter, which holds one line of reading inside the
+     bar's own readout column and leaves the drift sentence to an HTML node
+     beside it. The panel's scales and the Limits screen's are the same drawing
+     of the same rows, so this number is here to be handed over, never to differ
+     from the one that screen uses. */
+  var METER_HEIGHT = 24;
 
   /* The panel shows the worst few scales and links to the rest. */
   var METER_LIMIT = 6;
@@ -334,9 +340,231 @@
     return node;
   }
 
+  /* -------------------------------------------------------------- net worth */
+
+  /* §5.3: the card above the strip. It answers a different question from the
+     hero — what there is in total, rather than what can be spent today — so it
+     carries its own number and nothing below it moves.
+
+     It is held to three short rows on purpose. The panel underneath is long,
+     and a card that pushed the daily allowance off a 640px screen would have
+     traded the reading taken every day for the one taken once a month. */
+
+  var BLANK_WORTH = {
+    cash: 0,
+    investments: 0,
+    owedToMe: 0,
+    iOwe: 0,
+    assets: 0,
+    liabilities: 0,
+    total: 0,
+    measured: false,
+    counts: { accounts: 0, investments: 0, debts: 0 }
+  };
+
+  /* The card's reading is 28px and .money fixes its own 15px — the same clash
+     the hero has, and the same answer. The sign is kept here and dropped
+     there: an allowance is never negative, because the overspent state prints
+     its overrun as a positive number, but a net worth under water is exactly
+     the reading its owner needs to see. */
+  function worthMoney(minor) {
+    var cell = moneyCell(minor);
+    if (cell && cell.style) {
+      cell.style.setProperty("font-size", "inherit");
+      cell.style.setProperty("font-weight", "inherit");
+      cell.style.setProperty("min-width", "0");
+    }
+    return cell;
+  }
+
+  function worthPart(figure) {
+    return dom.el("span", { "class": "networth__part is-" + figure.side }, [
+      dom.el("span", { text: t(figure.key) }),
+      dom.el("span", { text: money(figure.amount) })
+    ]);
+  }
+
+  /* The four figures the reading is made of, in the order they are summed, and
+     only the ones somebody actually measured. A reader with two bank accounts
+     and no holdings learns nothing from "Investments ₺0,00", and a row of four
+     zeros on a clean install reads as a card that failed to load. A collection
+     the reader does keep records in stays on the line even at zero, because a
+     zero that was counted is a reading. */
+  function worthFigures(worth) {
+    var counts = worth.counts || {};
+    var out = [];
+
+    if (Number(counts.accounts) > 0 || worth.cash) {
+      out.push({ key: "networth.cash", amount: worth.cash, side: "assets" });
+    }
+    if (Number(counts.investments) > 0 || worth.investments) {
+      out.push({ key: "networth.investments", amount: worth.investments, side: "assets" });
+    }
+    if (worth.owedToMe) {
+      out.push({ key: "networth.owedToMe", amount: worth.owedToMe, side: "assets" });
+    }
+    if (worth.iOwe) {
+      out.push({ key: "networth.iOwe", amount: worth.iOwe, side: "liabilities" });
+    }
+    return out;
+  }
+
+  /* The two sums those four figures roll up into, each shown only if a figure
+     landed on that side — so a reader who owes nothing is never told so with a
+     zero. */
+  function worthTotals(worth, figures) {
+    function has(side) {
+      return figures.some(function (figure) { return figure.side === side; });
+    }
+    var out = [];
+    if (has("assets")) out.push({ key: "networth.assets", amount: worth.assets, side: "assets" });
+    if (has("liabilities")) {
+      out.push({ key: "networth.liabilities", amount: worth.liabilities, side: "liabilities" });
+    }
+    return out;
+  }
+
+  /* The card's first column measures 223px at 375px wide — the moon disc and
+     the day count hold the other one — and a figure with its label is about
+     130px of that, so the split takes one reading per line on a phone whatever
+     is in it. Four of them is four lines, and every line comes straight off the
+     bottom of the screen, where the daily allowance is.
+     Two lines is therefore the ceiling. Two is also what the roll-up costs, so
+     a reader with cash and holdings keeps the words that name them and only a
+     fuller set is stated as the sums it adds to. On a wide screen the column is
+     three times longer and all four fit on the one line. */
+  function worthSplit(worth) {
+    var figures = worthFigures(worth);
+    if (narrow() && figures.length > 2) figures = worthTotals(worth, figures);
+    if (!figures.length) return null;
+    return dom.el("p", { "class": "networth__split" }, figures.map(function (figure) {
+      return worthPart(figure);
+    }));
+  }
+
+  /* The waxing moon, and the one reason it is allowed on a disciplined screen:
+     the lit fraction IS the fraction of the period gone, so the disc is a
+     reading rather than an ornament. 44px is the square moon.css reserves for
+     it, and the chart declares that as its own max-width, so the two agree
+     without this file restating a size in CSS. */
+  function phaseNodes(progress) {
+    if (!progress) return [];
+
+    var ratio = typeof progress.ratio === "number" ? progress.ratio : 0;
+    var label = t("a11y.disc", { pct: percent(ratio) });
+    var disc = svgNode(Moon.Charts.moonDisc(ratio, {
+      size: 44,
+      ariaLabel: label,
+      title: label,
+      desc: label
+    }), null);
+
+    return [
+      dom.el("div", { "class": "networth__phase" }, disc),
+      dom.el("p", {
+        "class": "networth__day",
+        text: t("networth.day", { dayIndex: progress.dayIndex, days: progress.days })
+      })
+    ];
+  }
+
+  /* Every unarchived account, its balance, and the way to write the next one.
+     ui.js owns the strip's keyboard — one tab stop, arrows between the chips —
+     and the api it hands back is let go on purpose: both of its listeners are
+     bound to the strip itself, so the next render's dom.clear takes them away
+     with the nodes, and holding a reference would be the second thing this file
+     has promised not to keep between draws. */
+  function accountChips() {
+    var list = safe(function () { return Moon.Model.accounts(); }, []) || [];
+    var items = list.map(function (account) {
+      return {
+        id: account.id,
+        name: account.name,
+        icon: account.icon,
+        value: safe(function () { return Moon.Model.accountBalance(account.id); }, 0),
+        currency: account.currency,
+        color: account.color,
+        /* A balance is read here and changed on its own screen, so the chip is
+           a link there rather than a control that does something different
+           from the one standing next to it. */
+        href: "#hesaplar"
+      };
+    });
+
+    var strip = safe(function () {
+      return Moon.UI.chips({ items: items, currency: currency(), addHref: "#hesaplar" });
+    }, null);
+    return strip && strip.element ? strip.element : null;
+  }
+
+  /* Answers a null element when the model cannot answer at all: a panel without
+     the accounts half of the model is simply the panel as it was, which is a
+     working screen, and an empty card claiming nothing was measured would be a
+     different and less true statement.
+
+     `phase` tells the caller whether the waxing moon and the day count went
+     onto the card. §2.5 gives that reading one home, and the strip below has a
+     badge that can hold the same two marks, so exactly one of them draws them
+     and the answer has to travel between the two. */
+  function netWorthCard(progress) {
+    if (typeof Moon.Model.netWorth !== "function") return { element: null, phase: false };
+
+    var worth = safe(function () { return Moon.Model.netWorth(); }, null) || BLANK_WORTH;
+    var kids = [dom.el("p", { "class": "networth__label", text: t("networth.label") })];
+    var phase = false;
+
+    if (worth.measured) {
+      kids.push(dom.el("p", { "class": "networth__value" }, worthMoney(worth.total)));
+      var split = worthSplit(worth);
+      if (split) kids.push(split);
+      var marks = phaseNodes(progress);
+      phase = marks.length > 0;
+      marks.forEach(function (node) {
+        kids.push(node);
+      });
+    } else {
+      /* Nothing has been written down, so there is no number to print. The
+         sentence takes the breakdown's row, where 13px and dim is the right
+         weight for an invitation, and the reading row stays empty rather than
+         holding a confident zero nobody measured.
+
+         The phase steps aside here, and it is the only screen where it does.
+         It reads the calendar rather than the money, so it has nothing to add
+         to a card that is asking to be given something, and it holds the second
+         column, which costs the sentence a wrapped line. The reading is not
+         lost: `phase` stays false, and the strip's own badge draws the disc and
+         the day count instead. */
+      kids.push(dom.el("p", { "class": "networth__split", text: t("networth.empty") }));
+    }
+
+    var card = dom.el("div", { "class": "networth" }, kids);
+    var chips = accountChips();
+    /* The card and the strip are one block. `.view > * + *` hands 40px to every
+       top-level child, which is the rhythm between sections — but these
+       balances are the number above them broken out, not the next section, so
+       an unclassed wrapper keeps them at the scroller's own 8px instead. */
+    return {
+      element: chips ? dom.el("div", null, [card, chips]) : card,
+      phase: phase
+    };
+  }
+
   /* ------------------------------------------------------------------- hero */
 
-  function heroAside(periodKey, progress) {
+  /* The badge in the strip's top corner, and the second reason it exists: when
+     the period itself cannot be read it names the period instead of counting
+     its days, which is the only place on the panel that sentence is printed.
+
+     The first reason — the waxing moon and "day N of M" — belongs to the
+     net-worth card by §2.5, and two discs a hundred pixels apart are one
+     reading printed twice. So the badge draws them only when that card did not:
+     on a clean install, where the card has no measured number for them to sit
+     beside, and on a build whose model cannot answer netWorth at all. Answering
+     null costs the strip nothing at any width — the badge is positioned
+     absolutely, so no sibling moves into the space it leaves. */
+  function heroAside(periodKey, progress, taken) {
+    if (taken) return null;
+
     var ratio = progress && typeof progress.ratio === "number" ? progress.ratio : 0;
     var label = t("a11y.disc", { pct: percent(ratio) });
     var disc = svgNode(Moon.Charts.moonDisc(ratio, {
@@ -572,11 +800,12 @@
     return dom.el("p", { "class": "hero__line" }, toggle);
   }
 
-  function heroStrip(periodKey, allowance, summary, progress) {
+  function heroStrip(periodKey, allowance, summary, progress, phaseTaken) {
     var reading = heroReading(periodKey, allowance, summary);
     var kids = [];
 
-    kids.push(heroAside(periodKey, progress));
+    var aside = heroAside(periodKey, progress, phaseTaken);
+    if (aside) kids.push(aside);
     kids.push(dom.el("p", { "class": "hero__label", text: reading.label }));
     kids.push(dom.el("p", { "class": "hero__value" }, heroMoney(reading.value)));
 
@@ -696,19 +925,69 @@
     return "";
   }
 
-  function nameCell(row) {
-    return dom.el("span", {
-      "class": "meter__name" + (row.fixed ? " is-fixed" : ""),
-      text: row.name,
-      title: row.name
-    });
+  /* Moon.Model.budgetRows answers with the money and nothing else, so a row's
+     two marks are looked up on the category record where §3.4 keeps them. The
+     store fills both in on every read, which makes this a lookup and never a
+     default. */
+  function categoryOf(categoryId) {
+    if (!categoryId) return null;
+    if (typeof Moon.Model.categoryById !== "function") return null;
+    return safe(function () { return Moon.Model.categoryById(categoryId); }, null);
   }
 
-  /* One scale per category. The name is HTML, the track and its readout are one
-     SVG so the overrun can cross the end cap into the reading column (G1);
-     the row grid is held to two columns for the same reason. */
+  /* A record stores a plain hex, because an export has to mean the same colour
+     next year and in somebody else's browser. A theme stores a token, because
+     Dawn darkens all ten of the spectrum to clear contrast on white. Painting
+     the hex straight onto the row would therefore show a reader on Dawn a
+     different colour from the one they picked, so both ends go through Moon.UI,
+     which pairs the token with the stored hex as its fallback. */
+  function toneOf(dress) {
+    if (!dress || !dress.color || typeof Moon.UI.tone !== "function") return "";
+    return safe(function () { return Moon.UI.tone(dress.color); }, "") || "";
+  }
+
+  /* The card wears the category's colour down its leading edge whether or not
+     it has a limit, so the tone is set where the row is built rather than
+     beside the chart. */
+  function rowAttrs(className, dress) {
+    var attrs = { "class": className };
+    var tone = toneOf(dress);
+    if (tone) attrs.style = { "--tone": tone };
+    return attrs;
+  }
+
+  /* The icon rides in front of the name, where a reader picking one row out of
+     six finds it before they have read a word, and it is hidden from the
+     accessibility tree because the scale beside it is already labelled with the
+     category's name — read aloud it would only say the same thing twice. Its
+     gap is inline: the stylesheet carries no class for a mark inside
+     .meter__name and §10 forbids this file inventing one. */
+  function nameCell(row, dress) {
+    var kids = [];
+    if (dress && dress.icon) {
+      kids.push(dom.el("span", {
+        "aria-hidden": "true",
+        style: { "margin-right": "6px" }
+      }, dress.icon));
+    }
+    kids.push(row.name);
+
+    return dom.el("span", {
+      "class": "meter__name" + (row.fixed ? " is-fixed" : ""),
+      title: row.name
+    }, kids);
+  }
+
+  /* One scale per category, in the stylesheet's own three columns: name, track,
+     reading. The track and the percentage stay one SVG so an overrun can cross
+     the end cap and reach into the reading column (G1) — `.meter__scale` is
+     overflow:visible for exactly that — while the drift sentence is an HTML
+     node in the third column, because a 24-unit meter has room for one line of
+     text and the percentage is it. js/views.limits.js builds the same row the
+     same way, and these two must not drift apart. */
   function meterRow(row) {
     var over = row.driftState === "over";
+    var dress = categoryOf(row.categoryId);
     var classes = ["meter"];
     if (over) classes.push("is-over");
     if (over && overflowMark() === "flare") classes.push("is-flare");
@@ -729,27 +1008,29 @@
       ariaLabel: ariaLabel,
       title: ariaLabel,
       desc: t("limits.aria.pace", { pace: percent(row.paceRatio) }),
-      percentText: t("limits.pct", { pct: row.pct === null ? 0 : row.pct }),
-      driftText: driftText(row)
+      percentText: t("limits.pct", { pct: row.pct === null ? 0 : row.pct })
     }));
 
-    return dom.el("div", {
-      "class": classes.join(" "),
-      style: { "grid-template-columns": "var(--meter-name) minmax(0, 1fr)" }
-    }, [
-      nameCell(row),
-      dom.el("div", { "class": "meter__scale" }, svgNode(markup, null))
+    var readout = dom.el("span", { "class": "meter__readout" });
+    var drift = driftText(row);
+    if (drift) readout.appendChild(dom.el("span", { "class": "meter__drift", text: drift }));
+
+    return dom.el("div", rowAttrs(classes.join(" "), dress), [
+      nameCell(row, dress),
+      dom.el("div", { "class": "meter__scale" }, svgNode(markup, null)),
+      readout
     ]);
   }
 
-  /* A category with no limit is not a scale at zero: it is a number. */
+  /* A category with no limit is not a scale at zero: it is a number. It takes
+     the track's column rather than the reading's, so the eye scanning the
+     middle of the list for "how much" finds it where every bar ends. */
   function plainRow(row) {
-    return dom.el("div", {
-      "class": "meter",
-      style: { "grid-template-columns": "var(--meter-name) minmax(0, 1fr)" }
-    }, [
-      nameCell(row),
-      dom.el("div", { "class": "meter__readout" }, moneyCell(row.spent, { dim: true, sign: false }))
+    var dress = categoryOf(row.categoryId);
+    return dom.el("div", rowAttrs("meter", dress), [
+      nameCell(row, dress),
+      dom.el("div", { "class": "meter__scale" }, moneyCell(row.spent, { dim: true, sign: false })),
+      dom.el("span", { "class": "meter__readout" })
     ]);
   }
 
@@ -964,9 +1245,59 @@
     else if (global.location) global.location.hash = "#" + hash;
   }
 
+  function countOf(read) {
+    var list = safe(read, null);
+    return list && typeof list.length === "number" ? list.length : 0;
+  }
+
+  /* The whole store untouched: nothing written down, no account, no holding.
+     The three ways in answer that one moment and no other. A reader who has
+     already entered four accounts and six holdings has started — the net-worth
+     card above them is printing a measured number — and all they are short of
+     is entries; offering them the sample month there would read as an offer to
+     put their own setup aside. */
+  function untouched() {
+    if (countOf(function () { return Moon.Model.entries({}); })) return false;
+    if (countOf(function () { return Moon.Model.accounts({ all: true }); })) return false;
+    if (countOf(function () { return Moon.Model.investments({ all: true }); })) return false;
+    return true;
+  }
+
+  /* The row that writes an entry is already on this screen, a few lines up, so
+     "write one expense" puts the caret in it rather than carrying the reader to
+     another section to do the same thing there. Without the ledger's row there
+     is nothing here to focus, and the section that owns it is the honest second
+     answer. */
+  function focusQuickEntry(root) {
+    var field = root && root.querySelector
+      ? root.querySelector('.quickrow [name="amount"]')
+      : null;
+    if (!field || typeof field.focus !== "function") {
+      navigateTo("defter");
+      return;
+    }
+    if (typeof field.scrollIntoView === "function") {
+      safe(function () { return field.scrollIntoView({ block: "center" }); }, null);
+    }
+    field.focus();
+  }
+
   /* G9: the ledger's rules are printed before any data exists, and the three
-     ways in are full rows, not a row of buttons. */
-  function emptyPanel() {
+     ways in are full rows, not a row of buttons.
+
+     One card in either state, because a screen that has nothing to show should
+     not say so twice. A store with accounts or holdings in it but no entries is
+     not a first run, so it gets the shorter sentence and no invitation to begin
+     again; everything else about the panel above it already works. */
+  function emptyPanel(root) {
+    if (!untouched()) {
+      return Moon.UI.emptyState({
+        headingLevel: "h2",
+        headingKey: "empty.panel.heading",
+        bodyKey: "empty.panel.body"
+      });
+    }
+
     return Moon.UI.emptyState({
       ghost: 3,
       columns: 3,
@@ -977,7 +1308,7 @@
       actions: [
         {
           labelKey: "empty.ledger.action1",
-          onClick: function () { navigateTo("defter"); }
+          onClick: function () { focusQuickEntry(root); }
         },
         {
           labelKey: "empty.ledger.action2",
@@ -1060,7 +1391,7 @@
     if (!periodKey) {
       /* No usable period means no measurement; say so instead of drawing a
          strip full of zeros. */
-      root.appendChild(emptyPanel());
+      root.appendChild(emptyPanel(root));
       applyCssHooks(root);
       return;
     }
@@ -1071,7 +1402,13 @@
     };
     var progress = progressOf(periodKey);
 
-    root.appendChild(heroStrip(periodKey, allowance, summary, progress));
+    /* §5.3: what there is, above what can be spent. The two readings answer
+       different questions and neither one explains the other, so the card goes
+       first and the strip below it is untouched. */
+    var worth = netWorthCard(progress);
+    if (worth.element) root.appendChild(worth.element);
+
+    root.appendChild(heroStrip(periodKey, allowance, summary, progress, worth.phase));
     markSettled(root);
 
     /* Writing something down is the thing done most often, so it belongs on the
@@ -1085,9 +1422,9 @@
 
     /* An empty ledger gets the notebook's first page, not four empty sections.
        The strip stays: it is the CSV target in every state (G11). */
-    var total = safe(function () { return Moon.Model.entries({}).length; }, 0);
+    var total = countOf(function () { return Moon.Model.entries({}); });
     if (!total) {
-      root.appendChild(emptyPanel());
+      root.appendChild(emptyPanel(root));
       applyCssHooks(root);
       return;
     }

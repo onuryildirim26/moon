@@ -1,48 +1,107 @@
 /* Moon — design tokens.
  *
- * Direction: "Dial and Ledger" — a night-desk measuring instrument.
- * Dark ("Dial") is the default surface; the system preference for light wins
- * unless the reader picked a theme, and an explicit pick beats both.
+ * Direction: "Night and Dawn". Moon is a calm night check-in, so the dark
+ * surface is the identity and the default; the light surface reads as dawn
+ * breaking over a cool paper, never as a white sheet. The system preference
+ * for light wins unless the reader has pinned a dark surface, and an explicit
+ * pick beats both.
  *
- * Structure comes from 1px rules and whitespace only:
- * no box-shadow anywhere, no gradients, radius is 0 or 2px.
- * Amber (--dial) is reserved for data marks, the active rail item and the
- * primary button. It never tints body text or fills a background.
+ * Two generations of names live here on purpose. css/moon.css still reads the
+ * "Dial and Ledger" names (--plate, --dial, --gauge, --radius, --t-h2), so
+ * each of those is kept as an alias pointing into the new palette. An alias is
+ * declared once, in :root, and never repeated in a theme block: custom
+ * properties substitute at use time against the same element, and every theme
+ * block below targets that same :root, so redefining --surface for Dawn moves
+ * --plate with it. When moon.css is migrated onto the new names the alias
+ * block at the end of :root is the only thing that has to come out.
+ *
+ * Every ink-on-surface pair below was measured with WCAG 2.1 relative
+ * luminance. Body text and the semantic inks clear 4.5:1 on all three
+ * surfaces of their theme, because those inks carry 15px amounts and nav
+ * labels, which are not "large text". Non-text marks and the category
+ * spectrum clear 3:1. The hairlines (--rule, --rule-soft, --rule-strong) sit
+ * below 3:1 by design: they separate, they never carry meaning on their own,
+ * and nothing in the app depends on seeing one.
+ *
+ * Three colours could not be taken from the specification as written and are
+ * noted at the surface they failed on.
  */
 
 :root {
   color-scheme: dark;
 
-  /* --- surfaces -------------------------------------------------------- */
-  --bg: #0e1418;           /* page ground: blue graphite, never pure black */
-  --plate: #151d23;        /* instrument face: hero strip, focused row only */
-  --rule: #23303a;         /* 1px rules, scale ticks, input borders        */
-  --rule-strong: #35454f;  /* section dividers, axis baselines             */
+  /* --- Night surfaces --------------------------------------------------- */
+  /* --surface-2 is one step darker than the specified #222943. At #222943 the
+     specified --over #FF4D6D reads 4.46:1, just under the bar, and an
+     over-limit amount does land on a hovered row. Darkening one surface by a
+     step nobody can see keeps all five specified semantic inks exactly. */
+  --bg: #10131F;           /* page ground, indigo-black                      */
+  --surface: #191E30;      /* cards                                          */
+  --surface-2: #1F2540;    /* raised: chips, inputs, hover                   */
+  --rule: #2C3450;         /* 1px borders                                    */
+  --rule-soft: #212840;    /* dividers inside a card                         */
+  --rule-strong: #3E4873;  /* section dividers, axis baselines               */
 
-  /* --- ink ------------------------------------------------------------- */
-  --ink: #dde4e9;          /* body text and every numeral                   */
-  --ink-dim: #8b9ba7;      /* category, date, tick labels, cents, help      */
+  /* --- Night ink -------------------------------------------------------- */
+  /* --ink-faint is the one ink in the file that does not clear 4.5:1 on any
+     theme, so it belongs to disabled controls and non-text chart furniture.
+     An axis tick label is text; moon.css already paints those with --ink-dim
+     and that is the reason it has to stay that way. */
+  --ink: #E8EBF5;          /* body text and numerals        12.62:1 on s-2   */
+  --ink-dim: #96A0C0;      /* labels, dates, help            5.79:1 on s-2   */
+  --ink-faint: #68719A;    /* disabled, chart furniture      3.16:1 on s-2   */
 
-  /* --- data ------------------------------------------------------------ */
-  --dial: #e6a94f;         /* amber: expense data, active nav, primary CTA  */
-  --gauge: #7fb2c4;        /* cool: income, savings, money owed to you      */
-  --over: #d9705a;         /* iron oxide: over limit (default mark)         */
-  --flare: #f4f8fa;        /* opt-in alternative over-limit mark            */
-  --warn: #c9a24b;         /* brass: past 90% of a limit, due soon          */
-  --focus: #ffc978;        /* focus ring — never removed                    */
+  /* --- Night semantics -------------------------------------------------- */
+  --accent: #8AA6FF;       /* periwinkle, Moon's own: nav, primary, focus    */
+  --in: #3DD6A0;           /* money in                                       */
+  --out: #FF6F91;          /* money out                                      */
+  --over: #FF4D6D;         /* past the limit                                 */
+  --warn: #FFB454;         /* nearing the limit, due soon                    */
+  --focus: #AFC2FF;        /* focus ring — never removed                     */
+  --flare: #F2F5FF;        /* opt-in alternative over-limit mark             */
 
-  /* --- type ------------------------------------------------------------ */
-  --font-ui: "Archivo", "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
-  --font-prose: "Spectral", Georgia, "Times New Roman", serif;
+  /* --- category spectrum ------------------------------------------------ */
+  /* One luminance band so that a list of ten categories does not jangle.
+     A category's colour reaches the page as an inline --tone, never as a
+     class per colour. */
+  --cat-1: #8AA6FF;
+  --cat-2: #3DD6A0;
+  --cat-3: #FF6F91;
+  --cat-4: #FFB454;
+  --cat-5: #B388FF;
+  --cat-6: #45C8E8;
+  --cat-7: #9BDE4F;
+  --cat-8: #FF8A5B;
+  --cat-9: #FF6FD8;
+  --cat-10: #7E8CB0;
 
-  --t-hero: clamp(2.5rem, 7vw, 3.25rem);  /* 40 → 52px, weight 300         */
+  /* --- depth ------------------------------------------------------------ */
+  /* Tinted with the ground's hue rather than neutral black, and spent only on
+     raised summary surfaces: the net-worth card, budget cards, account chips
+     and sheets. A ledger row never takes one or the screen becomes a card kit. */
+  --shadow: 0 2px 10px rgb(6 8 18 / 0.45);
+  --shadow-lg: 0 8px 28px rgb(6 8 18 / 0.55);
+
+  /* --- type ------------------------------------------------------------- */
+  /* One family across the whole app. Plus Jakarta Sans has real tabular
+     figures and full Turkish coverage, which is what retires the old
+     Archivo/Spectral pair. --font-prose keeps its own name because moon.css
+     reads it in a dozen places, but it is no longer a serif: a serif fallback
+     would hand an offline reader the two-family look this direction drops,
+     so both stacks fall back through the same system faces. */
+  --font-ui: "Plus Jakarta Sans", "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
+  --font-prose: "Plus Jakarta Sans", "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
+
+  --t-hero: clamp(2.75rem, 9vw, 3.75rem);  /* 44 → 60px, weight 800         */
+  --t-big: 1.75rem;                        /* 28px — net worth, balances    */
   --t-mid: 1.25rem;                        /* 20px — period totals, limits  */
-  --t-prose-h: 1.5rem;                     /* 24px serif — empty states     */
-  --t-prose: 1.0625rem;                    /* 17px serif body               */
+  --t-prose-h: 1.5rem;                     /* 24px — empty-state headings   */
+  --t-prose: 1.0625rem;                    /* 17px — empty-state body       */
   --t-body: 1rem;                          /* 16px                          */
-  --t-amount: 0.9375rem;                   /* 15px, weight 500, tnum        */
+  --t-amount: 0.9375rem;                   /* 15px, weight 600, tnum        */
   --t-sm: 0.8125rem;                       /* 13px — rail, secondary        */
-  --t-h2: 0.8125rem;                       /* 13px, weight 600              */
+  --t-label: 0.75rem;                      /* 12px, weight 600 — sentence   */
+                                           /* case section labels, not caps */
   --t-tick: 0.6875rem;                     /* 11px — SVG axis ends only     */
 
   --lh-tight: 1.1;
@@ -59,168 +118,292 @@
   /* --- layout ---------------------------------------------------------- */
   --max: 1160px;
   --rail: 232px;
-  --gutter: 1.5rem;        /* 16px below 768px, set in moon.css            */
-  --amount-col: 140px;     /* 104px below 768px                            */
-  --note-col: 28px;        /* single-character margin marks: † ○ ↧         */
+  --gutter: 1.5rem;        /* 16px below 768px, set in moon.css             */
+  --amount-col: 140px;     /* 104px below 768px                             */
+  --note-col: 28px;        /* single-character margin marks: † ○ ↧          */
   --row-h: 52px;           /* ledger row, 44px touch minimum on phones      */
   --row-h-dense: 36px;
-  --radius: 2px;           /* inputs and buttons only                       */
+
+  /* --- shape ------------------------------------------------------------ */
+  /* Radius varies by role. One value on everything is the single clearest
+     sign of a template, and charts keep a square corner because a clipped
+     data mark is a lie about the data. */
+  --radius-card: 18px;     /* summary cards                                 */
+  --radius-box: 14px;      /* list cards, sheets                            */
+  --radius-control: 12px;  /* buttons, inputs, selects                      */
 
   /* --- motion ---------------------------------------------------------- */
   --dur-fast: 120ms;
   --dur-adapt: 600ms;      /* the one orchestrated moment: dark adaptation  */
   --dur-theme: 320ms;      /* colour tokens easing from one theme to the next */
   --ease: cubic-bezier(0.2, 0, 0.3, 1);
+
+  /* --- aliases for the names css/moon.css still reads ------------------- */
+  /* These exist so the 2200 lines of moon.css keep resolving while they are
+     migrated one section at a time. Nothing new should read them. */
+  --plate: var(--surface);        /* the raised face is now simply a surface */
+  --dial: var(--accent);          /* amber's role — nav, primary, data mark  */
+  --gauge: var(--in);             /* the cool ink was always money in        */
+  --radius: var(--radius-control);/* the old 2px applied to inputs only      */
+  --t-h2: var(--t-label);         /* section heads become sentence-case labels */
 }
 
-/* The reader's system asks for light and they have not pinned the dial. */
+/* The reader's system asks for light and they have not pinned a dark surface.
+   Every dark pin has to be excluded by name: `:not([data-theme="dial"])` alone
+   also matches a prism root, and the only thing saving prism today is source
+   order, which the next edit to this file could quietly reverse. */
 @media (prefers-color-scheme: light) {
-  :root:not([data-theme="dial"]) {
+  :root:not([data-theme="dial"]):not([data-theme="night"]):not([data-theme="prism"]) {
     color-scheme: light;
 
-    --bg: #e8ecef;
-    --plate: #f3f6f8;
-    --rule: #c6d0d7;
-    --rule-strong: #9faeb7;
+    --bg: #F2F3F9;
+    --surface: #FFFFFF;
+    --surface-2: #EDEFF7;
+    --rule: #E0E4F0;
+    --rule-soft: #EDEFF7;
+    --rule-strong: #C2C9DE;
 
-    --ink: #141e27;
-    --ink-dim: #55646e;
+    --ink: #1A1E2E;
+    --ink-dim: #5A6484;
+    --ink-faint: #7580A4;
 
-    --dial: #8a5510;
-    --gauge: #1f5a6b;
-    --over: #8a3324;
-    --flare: #0a1015;
-    --warn: #7a5a14;
-    --focus: #b36f16;
+    --accent: #2F50D6;
+    --in: #0C7A58;
+    --out: #A81B34;
+    --over: #851D30;
+    --warn: #935A0E;
+    --focus: #2F50D6;
+    --flare: #0A0E1A;
+
+    --cat-1: #5476E3;
+    --cat-2: #1E8D66;
+    --cat-3: #C9314F;
+    --cat-4: #AF6E1C;
+    --cat-5: #9162E5;
+    --cat-6: #1A88A2;
+    --cat-7: #568B1A;
+    --cat-8: #BC4A1E;
+    --cat-9: #C32899;
+    --cat-10: #6D7CA5;
+
+    --shadow: 0 1px 3px rgb(40 52 100 / 0.08);
+    --shadow-lg: 0 10px 30px rgb(40 52 100 / 0.12);
   }
 }
 
-/* Explicit picks override the system in both directions. */
-:root[data-theme="paper"] {
+/* Explicit picks override the system in both directions. The stored setting is
+   still the old word — "paper", "dial" — because readers have it saved; the new
+   word is accepted beside it so app.js may start writing either one. */
+:root[data-theme="paper"],
+:root[data-theme="dawn"] {
   color-scheme: light;
 
-  --bg: #e8ecef;
-  --plate: #f3f6f8;
-  --rule: #c6d0d7;
-  --rule-strong: #9faeb7;
+  /* Dawn's whole semantic row is darker than the specification's figures.
+     Measured against --surface-2 #EDEFF7, the specified --accent #4F6BE0 read
+     4.05:1, --in #0FA97A 2.62:1, --out #E2445F 3.50:1, --over #D32F4E 4.27:1
+     and --warn #C77A12 2.94:1 — all five under 4.5:1, and --warn under even
+     the 3:1 non-text bar. Each hue was darkened with its hue angle held, and
+     the five were spread on a luminance ladder rather than all pushed to the
+     same 4.6:1, because --in and --out share every chart and --warn and --over
+     share every meter: a reader who sees no colour has to tell those two pairs
+     apart by lightness alone. The ladder gaps are 1.37 and 1.67.
+     The spectrum needed the same treatment — nine of its ten colours read
+     between 1.41:1 and 2.65:1 on white — and was re-aimed as one band at
+     3.6:1, with saturation capped so the hot hues darkened into crimson and
+     rust instead of going neon. */
+  --bg: #F2F3F9;           /* cool paper, not cream                         */
+  --surface: #FFFFFF;
+  --surface-2: #EDEFF7;
+  --rule: #E0E4F0;
+  --rule-soft: #EDEFF7;
+  --rule-strong: #C2C9DE;
 
-  --ink: #141e27;
-  --ink-dim: #55646e;
+  --ink: #1A1E2E;          /* 14.41:1 on --surface-2                        */
+  --ink-dim: #5A6484;      /*  5.09:1 on --surface-2                        */
+  --ink-faint: #7580A4;    /*  3.40:1 on --surface-2, non-text only         */
 
-  --dial: #8a5510;
-  --gauge: #1f5a6b;
-  --over: #8a3324;
-  --flare: #0a1015;
-  --warn: #7a5a14;
-  --focus: #b36f16;
+  --accent: #2F50D6;       /*  5.65:1, and white on it reads 6.48:1         */
+  --in: #0C7A58;           /*  4.64:1                                       */
+  --out: #A81B34;          /*  6.37:1                                       */
+  --over: #851D30;         /*  8.25:1                                       */
+  --warn: #935A0E;         /*  4.93:1                                       */
+  --focus: #2F50D6;
+  --flare: #0A0E1A;
+
+  --cat-1: #5476E3;
+  --cat-2: #1E8D66;
+  --cat-3: #C9314F;
+  --cat-4: #AF6E1C;
+  --cat-5: #9162E5;
+  --cat-6: #1A88A2;
+  --cat-7: #568B1A;
+  --cat-8: #BC4A1E;
+  --cat-9: #C32899;
+  --cat-10: #6D7CA5;
+
+  --shadow: 0 1px 3px rgb(40 52 100 / 0.08);
+  --shadow-lg: 0 10px 30px rgb(40 52 100 / 0.12);
 }
 
-:root[data-theme="dial"] {
+:root[data-theme="dial"],
+:root[data-theme="night"] {
   color-scheme: dark;
 
-  --bg: #0e1418;
-  --plate: #151d23;
-  --rule: #23303a;
-  --rule-strong: #35454f;
+  --bg: #10131F;
+  --surface: #191E30;
+  --surface-2: #1F2540;
+  --rule: #2C3450;
+  --rule-soft: #212840;
+  --rule-strong: #3E4873;
 
-  --ink: #dde4e9;
-  --ink-dim: #8b9ba7;
+  --ink: #E8EBF5;
+  --ink-dim: #96A0C0;
+  --ink-faint: #68719A;
 
-  --dial: #e6a94f;
-  --gauge: #7fb2c4;
-  --over: #d9705a;
-  --flare: #f4f8fa;
-  --warn: #c9a24b;
-  --focus: #ffc978;
+  --accent: #8AA6FF;
+  --in: #3DD6A0;
+  --out: #FF6F91;
+  --over: #FF4D6D;
+  --warn: #FFB454;
+  --focus: #AFC2FF;
+  --flare: #F2F5FF;
+
+  --cat-1: #8AA6FF;
+  --cat-2: #3DD6A0;
+  --cat-3: #FF6F91;
+  --cat-4: #FFB454;
+  --cat-5: #B388FF;
+  --cat-6: #45C8E8;
+  --cat-7: #9BDE4F;
+  --cat-8: #FF8A5B;
+  --cat-9: #FF6FD8;
+  --cat-10: #7E8CB0;
+
+  --shadow: 0 2px 10px rgb(6 8 18 / 0.45);
+  --shadow-lg: 0 8px 28px rgb(6 8 18 / 0.55);
 }
 
-/* The third material: "Prism". A violet ground with four saturated data inks,
- * for the reader who asked for colour. It is a surface, not a mood: every token
- * below is measured, and the ladder is deliberate.
+/* The fourth material: "Prism". A violet ground with saturated data inks, for
+ * the reader who asked for colour. It is rebuilt on the new token names while
+ * keeping every hex that the old names resolved to, so a reader who has Prism
+ * saved sees the surface they chose: the old --dial orange is now --accent,
+ * the old --gauge cyan is now --in, and the old --over rose stays --over. Only
+ * --out is a genuinely new ink, and it was picked lighter than --over so that
+ * an ordinary expense and an overrun are 1.37 apart in luminance.
  *
- * Contrast against the ground (--bg #120c24) and against the plate (--plate
- * #1d1540), computed with WCAG 2.1 relative luminance:
+ * Measured against the tightest surface, --surface-2 #201746:
  *
- *   token         vs --bg   vs --plate   used for
- *   --ink         16.64      14.89       body text and every numeral
- *   --ink-dim      9.11       8.15       dates, ticks, cents, help
- *   --dial         8.11       7.26       expense marks, 15px amounts, CTA bg
- *   --gauge       12.24      10.95       income marks and amounts
- *   --over         5.55       4.97       the overrun mark and its reading
- *   --warn        16.56      14.82       a limit near its edge
- *   --flare       19.03      17.02       the opt-in overrun mark
- *   --focus       13.19      11.81       the ring
+ *   token         ratio   used for
+ *   --ink         14.44   body text and every numeral
+ *   --ink-dim      7.90   dates, ticks, cents, help
+ *   --accent       7.04   nav, primary button, focus-adjacent marks
+ *   --in          10.62   income marks and amounts
+ *   --out          7.73   expense marks and amounts
+ *   --over         4.82   the overrun mark and its reading
+ *   --warn        14.37   a limit near its edge
+ *   --flare       16.50   the opt-in overrun mark
+ *   --focus       11.45   the ring
+ *   --ink-faint    4.76   disabled controls, chart furniture
  *
- * Body text needs 4.5:1 and large text 3:1, so the tightest of these (--over on
- * the plate, 4.97) still clears the stricter bar. --dial also carries the
- * primary button, where --bg is painted ON it: that reading is 8.11.
- *
- * The four data inks have to be told apart by more than hue, so they are spaced
- * on a luminance ladder — over 26%, dial 40%, gauge 63%, warn 86% — which keeps
- * every pair at 1.31:1 or more, and at 1.23:1 or more after simulating
- * deuteranopia and protanopia. A reader who sees no colour at all still reads
- * four different greys.
+ * --surface-2 is #201746 rather than a lighter step because --over at 4.82 is
+ * the whole budget: a lighter raised surface put it under 4.5:1.
+ * The ground is also what the primary button paints its label in, and --bg on
+ * --accent reads 8.11.
  */
 :root[data-theme="prism"] {
   color-scheme: dark;
 
-  --bg: #120c24;
-  --plate: #1d1540;
-  --rule: #3a2d6e;
-  --rule-strong: #5d4ba6;
+  --bg: #120C24;
+  --surface: #1D1540;
+  --surface-2: #201746;
+  --rule: #3A2D6E;
+  --rule-soft: #2A2056;
+  --rule-strong: #5D4BA6;
 
-  --ink: #f3edff;
-  --ink-dim: #b9abe8;
+  --ink: #F3EDFF;
+  --ink-dim: #B9ABE8;
+  --ink-faint: #8F80C4;
 
-  --dial: #ff8a3c;
-  --gauge: #7adcff;
-  --over: #fb4273;
-  --flare: #ffffff;
-  --warn: #fff0a8;
-  --focus: #ffd166;
+  --accent: #FF8A3C;
+  --in: #7ADCFF;
+  --out: #FF8FB4;
+  --over: #FB4273;
+  --warn: #FFF0A8;
+  --focus: #FFD166;
+  --flare: #FFFFFF;
+
+  --cat-1: #8AA6FF;
+  --cat-2: #3DD6A0;
+  --cat-3: #FF6F91;
+  --cat-4: #FFB454;
+  --cat-5: #B388FF;
+  --cat-6: #45C8E8;
+  --cat-7: #9BDE4F;
+  --cat-8: #FF8A5B;
+  --cat-9: #FF6FD8;
+  --cat-10: #7E8CB0;
+
+  --shadow: 0 2px 10px rgb(9 5 22 / 0.50);
+  --shadow-lg: 0 8px 28px rgb(9 5 22 / 0.60);
 }
 
 /* Readers who ask for more contrast get stronger rules and brighter dim ink.
-   The light values must stay scoped to a light surface: `:not([data-theme="dial"])`
-   alone also matches the default dark page, and being more specific than `:root`
-   it would paint light-surface ink onto the dark ground — handing the reader who
-   asked for more contrast the worst contrast on the page. */
+   Three things make this section longer than it looks like it should be.
+   The light values must stay scoped to a light surface, because
+   `:not([data-theme="dial"])` alone also matches the default dark page and,
+   being more specific than `:root`, it would paint light-surface ink onto the
+   dark ground — handing the reader who asked for more contrast the worst
+   contrast on the page. The pinned themes need their own blocks because a
+   `:root[data-theme]` base block outweighs a plain `:root` here and would
+   otherwise put the ordinary ink back. And the semantic inks are left alone in
+   every theme: they already clear 4.5:1, and pushing them further would
+   collapse the luminance ladder --in/--out and --warn/--over are spaced on. */
 @media (prefers-contrast: more) {
   :root {
-    --rule: #3c4c57;
-    --rule-strong: #566a76;
-    --ink-dim: #aab8c2;
+    --rule: #3C4670;
+    --rule-soft: #313A5F;
+    --rule-strong: #55608F;
+    --ink-dim: #AEB7D4;     /* 7.53:1 on --surface-2, up from 5.79          */
+    --ink-faint: #8C94B8;   /* 5.04:1, up from 3.16 — now safe for text too */
   }
 }
 
 @media (prefers-contrast: more) and (prefers-color-scheme: light) {
-  :root:not([data-theme="dial"]) {
-    --rule: #9aa7b0;
-    --rule-strong: #6f7f8a;
-    --ink-dim: #41505a;
+  :root:not([data-theme="dial"]):not([data-theme="night"]):not([data-theme="prism"]) {
+    --rule: #B8C0D6;
+    --rule-soft: #D8DDEB;
+    --rule-strong: #9BA5C2;
+    --ink-dim: #3F4866;
+    --ink-faint: #5C6687;
   }
 }
 
 @media (prefers-contrast: more) {
-  :root[data-theme="paper"] {
-    --rule: #9aa7b0;
-    --rule-strong: #6f7f8a;
-    --ink-dim: #41505a;
+  :root[data-theme="paper"],
+  :root[data-theme="dawn"] {
+    --rule: #B8C0D6;
+    --rule-soft: #D8DDEB;
+    --rule-strong: #9BA5C2;
+    --ink-dim: #3F4866;     /* 7.85:1 on --surface-2, up from 5.09          */
+    --ink-faint: #5C6687;   /* 4.94:1, up from 3.40                         */
   }
 
-  :root[data-theme="dial"] {
-    --rule: #3c4c57;
-    --rule-strong: #566a76;
-    --ink-dim: #aab8c2;
+  :root[data-theme="dial"],
+  :root[data-theme="night"] {
+    --rule: #3C4670;
+    --rule-soft: #313A5F;
+    --rule-strong: #55608F;
+    --ink-dim: #AEB7D4;
+    --ink-faint: #8C94B8;
   }
 
-  /* Prism is a dark surface too, so its rules brighten rather than darken.
-     The data inks are left alone: they already clear 4.5:1 and pushing them
-     further would collapse the luminance ladder they are spaced on. */
+  /* Prism is a dark surface too, so its rules brighten rather than darken. */
   :root[data-theme="prism"] {
-    --rule: #52429a;
-    --rule-strong: #7e6bca;
-    --ink-dim: #d4caf7;
+    --rule: #52429A;
+    --rule-soft: #43358A;
+    --rule-strong: #7E6BCA;
+    --ink-dim: #D4CAF7;     /* 10.68:1 on --surface-2, up from 7.90         */
+    --ink-faint: #A99BD8;   /*  6.58:1, up from 4.76                        */
   }
 }
 
@@ -229,5 +412,31 @@
     --dur-fast: 0ms;
     --dur-adapt: 0ms;
     --dur-theme: 0ms;
+  }
+}
+
+/* Paper has a different ink budget: named colours and no lifted surfaces.
+   moon.css already does this for the older names and wins there by load order;
+   these are the new names it does not know about yet, so that a page printed
+   mid-migration does not come out with a dark card or a drop shadow rendered
+   as a grey smear. Every pinned theme has to be named, because a bare `:root`
+   inside a media query does not outweigh `:root[data-theme="prism"]`, and this
+   block sits last in the file so it wins the tie against the theme blocks. */
+@media print {
+  :root,
+  :root[data-theme="dial"],
+  :root[data-theme="night"],
+  :root[data-theme="paper"],
+  :root[data-theme="dawn"],
+  :root[data-theme="prism"] {
+    --surface: white;
+    --surface-2: white;
+    --rule-soft: silver;
+    --ink-faint: dimgray;
+    --accent: black;
+    --in: dimgray;
+    --out: black;
+    --shadow: none;
+    --shadow-lg: none;
   }
 }

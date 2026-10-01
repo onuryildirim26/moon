@@ -1,0 +1,27 @@
+{
+  "name": "Moon — budget ledger",
+  "short_name": "Moon",
+  "description": "Track spending, limits, savings, debts and investments. Everything stays in your browser.",
+  "id": "/moon/",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "display_override": ["standalone", "minimal-ui"],
+  "orientation": "portrait-primary",
+  "background_color": "#10131F",
+  "theme_color": "#10131F",
+  "categories": ["finance", "productivity"],
+  "lang": "en",
+  "dir": "ltr",
+  "icons": [
+    { "src": "assets/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "assets/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "assets/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" },
+    { "src": "assets/moon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ],
+  "shortcuts": [
+    { "name": "Write an entry", "short_name": "Write", "url": "./#panel" },
+    { "name": "Investments", "short_name": "Investments", "url": "./#yatirim" },
+    { "name": "Ledger", "short_name": "Ledger", "url": "./#defter" }
+  ]
+}

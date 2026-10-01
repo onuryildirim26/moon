@@ -1,15 +1,27 @@
 /* Moon — the single stylesheet.
  *
- * The visual system has one law: structure is born from 1px lines and empty
- * space, never from boxes. There is no box-shadow, no gradient and no lifted
- * card anywhere in this file; a radius is 0, or 2px on an input or a button.
- * A "plate" surface appears in exactly two places (the hero strip and the
- * focused ledger row) to say "this face caught the light", not "this is a card".
+ * The visual system has one law: shape says what a thing IS. A radius is
+ * therefore never one value applied everywhere — 18px on a summary card,
+ * 14px on a list card or a sheet, 12px on a control, 999px on a pill, and 0
+ * on a chart, because a clipped data mark is a lie about the data. Depth is
+ * spent the same way: a shadow tinted with the ground's own hue goes on the
+ * surfaces that are genuinely lifted off the page (the summary cards, the
+ * sheets, the bottom bar, the undo strip) and nowhere else. The ledger is the
+ * line this rule is drawn at: it stays a flat list with day groupings, because
+ * one card per row turns a month of honest reading into a SaaS card kit.
+ * Everything that merely divides is still a 1px hairline.
  *
- * Amber (--dial) is a data ink: scale fills, the active rail item, the primary
- * button. It never tints body text and never fills a background.
+ * --accent is a data ink: scale fills, the active rail item, the primary
+ * button, the focus-adjacent marks. It never tints body text. Income and
+ * expense have inks of their own (--in / --out) and a limit in trouble has two
+ * more (--warn / --over); those four are spaced on a luminance ladder in
+ * css/tokens.css, so a reader who sees no colour still reads the difference.
+ *
  * Every colour here comes from css/tokens.css — no raw hex is written below
  * (the print block swaps in named colours, which the ink of paper demands).
+ * A category's own colour arrives as an inline `style="--tone: #8AA6FF"` on
+ * the element that owns it, and every rule below reads var(--tone): there is
+ * never one class per colour.
  * Section rhythm is governed from ONE rule (.view > * + *); nothing else hands
  * out vertical margin, so no two rules ever cancel each other out.
  */
@@ -20,6 +32,13 @@
    as belonging to this file. */
 :root {
   --t-rail: 0.9375rem;      /* 15px — rail items read as text, not as tabs    */
+  /* The one type size in the app below --t-label, and it buys exactly one
+     thing: five cells of a 375px bottom bar. Measured at 12px the English
+     "Investments" is 70px wide inside a 66px cell and breaks across two lines;
+     at 11px it is 64px and fits. A nav label that wraps is worse to read than
+     a nav label one step smaller, and nothing else in the file may borrow
+     this — body copy and every reading stay at or above --t-sm. */
+  --t-rail-bar: 0.6875rem;  /* 11px — the phone bar's cells, nowhere else     */
   --rail-h: 56px;           /* phone bottom rail                              */
   --day-col: 72px;          /* ledger date gutter: the day head hangs in it    */
   --cat-col: 12ch;          /* category column, truncates with an ellipsis     */
@@ -31,6 +50,14 @@
   --iv-ch: 7;               /* inlineValue: digit width, ui.js overwrites it  */
   --scrim: rgb(0 0 0 / 0.55);   /* dialog backdrop — the only translucency    */
   --stagger: 60ms;          /* dark-adaptation step delay                     */
+  --pill: 999px;            /* chips and tags: a pill is a shape, not a size  */
+
+  /* A category, an account or a holding reaches the page with its own colour
+     in an inline --tone. Declaring the default here is what lets every rule
+     below read a bare var(--tone): an element that was given no colour of its
+     own inherits Moon's accent instead of resolving to nothing and dropping
+     the whole declaration. */
+  --tone: var(--accent);
 }
 
 /* ------------------------------------------------------------------- reset
@@ -119,9 +146,15 @@ table {
   outline-offset: 2px;
 }
 
+/* Inset where the ring would otherwise be clipped by the thing around it: a
+   full-bleed view, a row inside a scroller, a sheet, and the bottom bar's own
+   cells. The ring is still 2px and still never removed. */
 .view:focus-visible,
 .ledger-row:focus-visible,
-.dialog:focus-visible {
+.dialog:focus-visible,
+.rail__item:focus-visible,
+.chip:focus-visible,
+.holding:focus-visible {
   outline-offset: -2px;
 }
 
@@ -144,11 +177,15 @@ table {
   top: 0;
   left: 0;
   padding: var(--s1) var(--s2);
-  background: var(--plate);
+  background: var(--surface);
   color: var(--ink);
   border: 1px solid var(--rule);
-  border-radius: 0;
+  /* It floats over the page while focused, which is the one thing a shadow is
+     for, and it reads as the sheet-shaped thing it is. */
+  border-bottom-right-radius: var(--radius-box);
+  box-shadow: var(--shadow-lg);
   font-size: var(--t-sm);
+  font-weight: 600;
   transform: translateY(-140%);
   transition: transform var(--dur-fast) var(--ease);
 }
@@ -158,7 +195,12 @@ table {
 }
 
 /* Every digit in the app scans as a column. (.num and .tnum are the same
-   request under two names: views write .num, ui.js writes .tnum.) */
+   request under two names: views write .num, ui.js writes .tnum.)
+   "tnum" is asked for twice on purpose: font-variant-numeric is the standard
+   property and font-feature-settings is what reaches Plus Jakarta Sans'
+   figures on the engines that still only honour the low-level switch. "cv11"
+   is that family's single-storey "a" at small sizes, which keeps a 12px label
+   legible next to its number. */
 .num,
 .tnum,
 .money,
@@ -172,10 +214,22 @@ table {
 .chart__read,
 .undo__count,
 .storage__read,
+.networth__value,
+.networth__part,
+.chip__value,
+.account__value,
+.account__flow,
+.holding__qty,
+.holding__value,
+.holding__gain,
+.invsum__value,
+.invsum__cost,
+.invsum__gain,
 input[inputmode="decimal"],
 input[type="number"],
 input[type="date"] {
   font-variant-numeric: tabular-nums lining-nums;
+  font-feature-settings: "tnum" 1, "cv11" 1;
 }
 
 .prose {
@@ -193,33 +247,41 @@ input[type="date"] {
   display: flex;
   align-items: center;
   gap: var(--s1);
-  font-size: var(--t-rail);
-  font-weight: 600;
-  letter-spacing: 0.01em;
+  font-size: var(--t-mid);
+  font-weight: 800;
+  letter-spacing: -0.02em;
   line-height: 1;
 }
 
+/* The disc is the only mark in the app that is the product's name rather than
+   a reading, so it is the one place the accent sits beside body text. */
 .brand__disc {
-  color: var(--ink-dim);
+  color: var(--accent);
   flex: none;
 }
 
+/* A section head is a label, not a headline: the numbers inside the section
+   are what the eye should land on. 13px/600 in full ink, sentence case —
+   never tracked-out capitals, which is the oldest template tell there is. */
 .section__title {
-  font-size: var(--t-h2);
+  font-size: var(--t-sm);
   font-weight: 600;
   line-height: var(--lh-tight);
-  letter-spacing: 0;
+  letter-spacing: 0.005em;
 }
 
+/* Bare h2: a sheet title and the heading ui.js prints when a view asks for
+   one. Sized as a real heading, since nothing else competes with it there. */
 h2 {
-  font-size: var(--t-h2);
-  font-weight: 600;
+  font-size: var(--t-mid);
+  font-weight: 700;
   line-height: var(--lh-tight);
+  letter-spacing: -0.01em;
 }
 
 h3 {
   font-size: var(--t-body);
-  font-weight: 500;
+  font-weight: 600;
   line-height: var(--lh-tight);
 }
 
@@ -241,16 +303,21 @@ h3 {
   color: var(--ink-dim);
 }
 
-/* ------------------------------------------------------------------ shell */
+/* ------------------------------------------------------------------ shell
+   The header is pure overhead: it holds no reading, and whatever it spends is
+   spent again on every screen in the app. So its own padding is the small step
+   and the controls inside it carry their height on their 44px targets rather
+   than on air around them — a row of 40px controls inside 16px of padding was
+   costing a phone a quarter of its screen before a single number. */
 .top {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: var(--s2);
+  gap: var(--s1) var(--s2);
   max-width: var(--max);
   margin: 0 auto;
-  padding: var(--s2) var(--gutter);
+  padding: var(--s1) var(--gutter);
   border-bottom: 1px solid var(--rule);
 }
 
@@ -258,7 +325,7 @@ h3 {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: var(--s2);
+  gap: var(--s1) var(--s2);
   font-size: var(--t-sm);
 }
 
@@ -268,22 +335,30 @@ h3 {
   gap: var(--s3);
   max-width: var(--max);
   margin: 0 auto;
-  padding: var(--s3) var(--gutter) var(--s5);
+  padding: var(--s2) var(--gutter) var(--s5);
 }
 
 .view {
   min-width: 0;
 }
 
-/* The one rule that hands out vertical rhythm between sections. */
+/* The one rule that hands out vertical rhythm between sections. 24px, not 40:
+   a phone has about 640px of usable height, and at 40px a reader met two
+   things at a time on a screen that could have held four. The sections are
+   already parted by a titled head with a rule running off it, so the gap is
+   not what tells them apart — it only has to stop them touching. The phone
+   breakpoint takes it down one more step. */
 .view > * + * {
-  margin-top: var(--s5);
+  margin-top: var(--s3);
 }
 
 /* --------------------------------------------------------------- the rail
-   A list of words. No pill, no tab, no icon, no background fill. The active
-   item is a 2px amber rule and full-brightness ink; the 2px is always
-   reserved so nothing shifts when the route changes. */
+   Navigation the way an app does it, not a list of links: each destination is
+   a 12px-radius cell, the one you are on is filled with the raised surface and
+   lettered in the accent, and the fill is what carries "you are here" at all
+   three breakpoints. Weight never changes between states — a bolder active
+   label would be wider, and the whole row of words would shuffle every time
+   the route changed. */
 .rail {
   display: flex;
   font-size: var(--t-rail);
@@ -292,31 +367,40 @@ h3 {
 .rail__item {
   display: flex;
   align-items: center;
+  gap: var(--s1);
   color: var(--ink-dim);
-  border-left: 2px solid transparent;
-  border-bottom: 2px solid transparent;
-  padding: 6px var(--s1);
-  min-height: 32px;
-  transition: opacity var(--dur-fast) var(--ease);
+  padding: 6px var(--s2);
+  min-height: 40px;
+  border-radius: var(--radius-control);
+  transition:
+    background-color var(--dur-fast) var(--ease),
+    color var(--dur-fast) var(--ease);
 }
 
 .rail__item:hover {
   color: var(--ink);
+  background: var(--surface-2);
 }
 
+/* The pill a section is on carries a trace of the accent, not just the raised
+   surface: on Dawn a surface step is almost nothing against the page ground,
+   and the strip breakpoint has no card behind it to step up from. The flat
+   fill is declared first for an engine without color-mix(). */
 .rail__item.is-active,
 .rail__item[aria-current="page"] {
-  color: var(--ink);
-  background: none;
+  color: var(--accent);
+  background: var(--surface-2);
+  background: color-mix(in srgb, var(--accent) 16%, var(--surface-2));
 }
 
 .rail__more {
   display: none;
   align-items: center;
   justify-content: center;
+  gap: var(--s1);
   background: none;
   border: 0;
-  border-left: 2px solid transparent;
+  border-radius: var(--radius-control);
   color: var(--ink-dim);
   font-size: var(--t-rail);
   cursor: pointer;
@@ -325,8 +409,13 @@ h3 {
 /* ---------------------------------------------------------------- section
    Title, then a 1px rule running to the right edge, then the aside. The rule
    is a pseudo-element so a section with no aside needs no filler markup. */
+/* The aside is a whole sentence in some sections ("Pool behind the allowance
+   ₺13,000.00"), and it cannot shrink below its longest word. Letting the head
+   wrap is what keeps a narrow phone from being handed a page it can scroll
+   sideways: the rule takes the first line and the aside drops under it. */
 .section__head {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: var(--s2);
   min-height: 24px;
@@ -348,26 +437,31 @@ h3 {
 
 .section__aside {
   order: 2;
-  flex: none;
+  flex: 0 1 auto;
+  min-width: 0;
+  margin-left: auto;
   font-size: var(--t-sm);
   color: var(--ink-dim);
 }
 
 .section__body {
-  margin-top: var(--s2);
+  margin-top: var(--s1);
 }
 
 /* ------------------------------------------------------------------- hero
-   A strip, not a card: plate surface, a 1px rule above and below, radius 0,
-   no shadow. The whole strip is the CSV drop target (G11), so the dashed
-   border arrives as an inset outline — it cannot move a single pixel. */
+   The one honest number, on the deepest summary card in the app: 18px corners,
+   the raised surface, and a shadow tinted with the ground's own hue. The
+   reading itself is unchanged, because it is the thing that works — what
+   changed is that it now sits on a surface that looks lifted rather than on a
+   strip of hairlines. The whole card is the CSV drop target (G11), so the
+   dashed border arrives as an inset outline — it cannot move a single pixel. */
 .hero {
   position: relative;
-  background: var(--plate);
-  border-top: 1px solid var(--rule);
-  border-bottom: 1px solid var(--rule);
-  border-radius: 0;
-  padding: var(--s3) var(--s2);
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow);
+  padding: var(--s2);
 }
 
 .hero > * + * {
@@ -375,30 +469,65 @@ h3 {
 }
 
 .hero__label {
-  font-size: var(--t-sm);
+  font-size: var(--t-label);
+  font-weight: 600;
   color: var(--ink-dim);
 }
 
 .hero__value {
   font-size: var(--t-hero);
-  font-weight: 300;
+  font-weight: 800;
   line-height: 1;
-  letter-spacing: -0.01em;
+  letter-spacing: -0.03em;
 }
 
+/* The kuruş are not the reading: at hero size they are set to 45% of the
+   major units and 55% of their ink, so the eye lands on the lira and can
+   still find the cents when it wants them. The separator track is released
+   from its fixed 6px here — that track exists to make every row in the ledger
+   put its comma on the same pixel, and a 60px numeral has no column to agree
+   with. Without this the comma would overflow a 6px cell into the digits on
+   both sides of it. */
+.hero__value .money,
+.networth__value .money {
+  grid-template-columns: minmax(0, 1fr) auto auto auto auto auto auto;
+}
+
+.hero__value .m-sep,
+.hero__value .m-cents,
+.hero__value .m-sym,
+.networth__value .m-sep,
+.networth__value .m-cents,
+.networth__value .m-sym {
+  font-size: 45%;
+  color: inherit;
+  opacity: 0.55;
+}
+
+/* The period reading rides in a pill so it reads as a badge on the card
+   rather than as a second, competing label. width:max-content keeps it that
+   shape at the phone breakpoint too, where it stops being absolute and would
+   otherwise stretch to the full width of the card as a block-level flex box. */
 .hero__aside {
   position: absolute;
-  top: var(--s3);
+  top: var(--s2);
   right: var(--s2);
   display: flex;
   align-items: center;
   gap: var(--s1);
+  width: max-content;
+  max-width: 100%;
+  padding: 4px var(--s2) 4px var(--s1);
+  background: var(--surface-2);
+  border-radius: var(--pill);
   font-size: var(--t-sm);
   color: var(--ink-dim);
 }
 
+/* The trail is the same reading as the number above it, drawn rather than
+   printed, so it sits on the hero's own 8px step and not on a wider one. */
 .hero__trail {
-  margin-top: var(--s2);
+  margin-top: var(--s1);
 }
 
 .hero__line {
@@ -420,17 +549,54 @@ h3 {
 }
 
 /* ------------------------------------------------------------------ meter
-   48px row: name left, scale in the middle, reading right. */
+   A budget card: name left, scale in the middle, reading right, and a 4px bar
+   of the category's own colour down the leading edge. Cards, not rows, because
+   a limit is a thing you keep an eye on rather than a line in a list — this is
+   the one place the reference apps are right and the old hairline list was
+   wrong.
+
+   The tone bar is a pseudo-element rather than a border-left, because a 4px
+   border on a 14px corner renders as a tapered wedge, and rather than an inset
+   box-shadow, because this element already spends its box-shadow on depth.
+   An absolutely positioned child of a grid container is out of flow — it takes
+   no cell — and its containing block is the grid's padding box, whose edges
+   are the inner edges of the border. A zero inset is therefore already flush
+   against the border on all three sides, and the bar needs no arithmetic
+   against this card's own padding to get there. */
 .meter {
+  position: relative;
   display: grid;
   grid-template-columns: var(--meter-name) minmax(0, 1fr) var(--meter-read);
   align-items: center;
   column-gap: var(--s2);
-  min-height: 48px;
+  min-height: 56px;
+  padding: var(--s1) var(--s2);
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-box);
+  box-shadow: var(--shadow);
+}
+
+.meter::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 4px;
+  background: var(--tone);
+  border-radius: var(--radius-box) 0 0 var(--radius-box);
+}
+
+/* The one card in trouble stops wearing its category's colour: the edge, the
+   reading and the cap all go to the overrun ink together, or the row that is
+   over would still be dressed as though nothing had happened. */
+.meter.is-over::before {
+  background: var(--over);
 }
 
 .meter + .meter {
-  border-top: 1px solid var(--rule);
+  margin-top: var(--s1);
 }
 
 .meter__name {
@@ -439,6 +605,7 @@ h3 {
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: var(--t-sm);
+  font-weight: 600;
   color: var(--ink);
 }
 
@@ -453,10 +620,13 @@ h3 {
 }
 
 /* The limit cap is the one mark on the track you can take hold of, so it is
-   the one mark drawn in the dial's own ink. Every other tick is a grey
+   the one mark drawn in the accent's own ink. Every other tick is a grey
    hairline; this is 2px and lit, which is the whole of the invitation. The hit
    area stays the full 44px the grip is given in views.limits.js — a thumb
    needs that much — and only the stroke is visible inside it.
+   Its geometry is deliberately untouched by the restyle: the 2px width and the
+   -1px left margin are what centre the stroke under the finger, and the drag
+   writes `left` against that. Only the ink changed name.
 
    `left` is never transitioned: a drag writes it on every pointermove and the
    cap has to sit under the finger, not trail it. */
@@ -468,7 +638,8 @@ h3 {
   width: 2px;
   height: 18px;
   margin: -9px 0 0 -1px;
-  background: var(--dial);
+  background: var(--accent);
+  border-radius: 1px;
   transform-origin: 50% 50%;
   transition:
     transform var(--dur-fast) var(--ease),
@@ -528,7 +699,11 @@ h3 {
 
 /* ----------------------------------------------------------------- ledger
    No line between rows. A 1px rule between day groups only: ~25 lines instead
-   of 200. The day head hangs into the left margin like a lab-book note. */
+   of 200. The day head hangs into the left margin like a lab-book note.
+   This is the one list in the app that is NOT made of cards, and it is the
+   most important screen in it: 200 shadowed boxes is how a month of spending
+   stops being readable. Depth here is one soft 12px-rounded fill on the row
+   under the pointer, and nothing else. */
 .ledger {
   margin-top: var(--s2);
 }
@@ -545,6 +720,9 @@ h3 {
   padding-top: var(--s1);
 }
 
+/* The date is the handle a reader scrolls by, so it carries the weight and
+   the full ink; the day's total stays dim beside it. Both are small — the
+   grouping has to be findable without competing with the amounts under it. */
 .day__head {
   display: flex;
   align-items: baseline;
@@ -552,12 +730,14 @@ h3 {
   gap: var(--s2);
   margin-left: calc(var(--day-col) * -1);
   padding-right: 0;
-  font-size: var(--t-sm);
+  font-size: var(--t-label);
   color: var(--ink-dim);
 }
 
 .day__label {
   flex: none;
+  font-weight: 600;
+  color: var(--ink);
 }
 
 .day__total {
@@ -578,22 +758,32 @@ h3 {
   /* Both reserved so neither the guide line nor the focus rule can shift a row. */
   border-bottom: 1px solid transparent;
   border-left: 2px solid transparent;
+  /* The fill is allowed to bleed a little past the text on both sides, so a
+     hovered row reads as a highlight rather than as a box drawn around the
+     words. Each padding is cancelled by an equal negative margin, so the grid
+     columns measure exactly what they measured before. */
   padding-left: var(--s1);
+  padding-right: var(--s1);
   margin-left: calc(var(--s1) * -1 - 2px);
+  margin-right: calc(var(--s1) * -1);
+  border-radius: var(--radius-control);
 }
 
 .ledger.is-dense .ledger-row {
   min-height: var(--row-h-dense);
 }
 
+/* --surface, not --surface-2: the ledger sits on the page ground, and the
+   lift that reads there is the card surface. The raised step is for something
+   raised on a card, which a ledger row never is. */
 .ledger-row:hover {
-  background: var(--plate);
+  background: var(--surface);
 }
 
 .ledger-row.is-active,
 .ledger-row:focus-within {
-  background: var(--plate);
-  border-left-color: var(--dial);
+  background: var(--surface);
+  border-left-color: var(--accent);
 }
 
 /* G5: in a heavy day, or in any filtered view, a guide line every fifth row. */
@@ -607,13 +797,14 @@ h3 {
   color: var(--ink-dim);
 }
 
+/* font-stretch is gone with Archivo: the one family in the app has no width
+   axis, so asking for 92% either did nothing or invited a synthetic condense. */
 .ledger-row__cat {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: var(--t-sm);
-  font-stretch: 92%;
   color: var(--ink-dim);
 }
 
@@ -623,6 +814,7 @@ h3 {
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: var(--t-amount);
+  font-weight: 500;
 }
 
 .ledger-row.is-unconfirmed .ledger-row__note {
@@ -765,12 +957,15 @@ h3 {
   padding-right: 0.15em;
 }
 
+/* Expense and income now have inks of their own, which is what the old
+   amber-for-everything could not say: --out and --in are two hues AND two
+   luminances apart, so the pair survives a reader who sees no colour. */
 .money.is-out {
-  color: var(--dial);
+  color: var(--out);
 }
 
 .money.is-in {
-  color: var(--gauge);
+  color: var(--in);
 }
 
 .money.is-dim {
@@ -792,12 +987,23 @@ h3 {
 }
 
 .mark.is-unconfirmed {
-  color: var(--dial);
+  color: var(--accent);
 }
 
 /* ----------------------------------------------------------------- charts
-   The reading line lives above the chart; there is no floating tooltip. */
-.chart {
+   The reading line lives above the chart; there is no floating tooltip.
+
+   `div.chart`, not `.chart`: js/charts.js stamps `class="chart"` on the SVG
+   root of every figure whose caller does not name one, so the bare class
+   matches two quite different things — the wrapper a view puts a figure in,
+   which does want parting from the prose above it, and a mark handed straight
+   to a control, which does not. A budget card's scale is the second kind, and
+   it was paying 16px for it: the SVG's top margin collapsed through the track
+   around it and landed inside .meter__scale, which is a grid item and
+   therefore its own formatting context, so every meter in the app stood 16px
+   taller than its contents. Keying the rhythm to the element type leaves the
+   margin exactly where it was meant to be. */
+div.chart {
   margin-top: var(--s2);
 }
 
@@ -832,12 +1038,25 @@ h3 {
   border-top: 1px solid var(--rule);
 }
 
+/* The toggle is a control, so it wears a control's shape — a pill the width of
+   its own words, which is also what keeps it from reading as a table caption. */
 .numbers > summary {
-  padding: var(--s1) 0;
+  display: inline-flex;
+  align-items: center;
+  min-height: 32px;
+  margin: var(--s1) 0;
+  padding: 0 var(--s2);
+  background: var(--surface-2);
+  border-radius: var(--pill);
   font-size: var(--t-sm);
+  font-weight: 600;
   color: var(--ink-dim);
   cursor: pointer;
   list-style: none;
+}
+
+.numbers > summary:hover {
+  color: var(--ink);
 }
 
 .numbers > summary::-webkit-details-marker {
@@ -849,17 +1068,30 @@ h3 {
   font-size: var(--t-sm);
 }
 
+/* The column gap stays at 8px even though everything else in the restyle grew:
+   a chart's table is three or four numeric columns wide, and on a 375px screen
+   16px of gutter per column is the difference between a table that fits and
+   one that is cut off at the edge with nothing to scroll it. */
 .table th,
 .table td {
-  padding: 6px var(--s1) 6px 0;
+  padding: var(--s1) var(--s1) var(--s1) 0;
   text-align: left;
-  border-bottom: 1px solid var(--rule);
   vertical-align: baseline;
 }
 
+/* The head is a label row, so it takes the heavier line and the rows under it
+   keep the ordinary hairline. --rule-soft is NOT used here: on Dawn it is the
+   same value as --surface-2, which disappears against the page ground these
+   tables sit on, and a table whose rows do not separate is unreadable. */
 .table th {
-  font-weight: 500;
+  font-size: var(--t-label);
+  font-weight: 600;
   color: var(--ink-dim);
+  border-bottom: 1px solid var(--rule-strong);
+}
+
+.table td {
+  border-bottom: 1px solid var(--rule);
 }
 
 /* A <caption> centres itself by browser default, which is the one centred
@@ -903,14 +1135,24 @@ h3 {
   font-size: var(--t-sm);
 }
 
+/* The single column is declared rather than left implicit, and that is what
+   keeps the Data screen on the page. An implicit track is `auto`, which sizes
+   to its widest item's max-content; `input[type="file"]` is the one control
+   the browser measures for us and its max-content is its button plus "No file
+   chosen" — 399px, which the field then grew to and carried out past a 375px
+   screen, 74px of sideways scroll on every reading. `max-width: 100%` cannot
+   help there, because 100% was already 399px. A `minmax(0, 1fr)` track takes
+   the width it is given instead of the width it would like. */
 .field {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 4px;
   min-width: 0;
 }
 
 .field__label {
-  font-size: var(--t-sm);
+  font-size: var(--t-label);
+  font-weight: 600;
   color: var(--ink-dim);
 }
 
@@ -930,11 +1172,15 @@ h3 {
 /* An empty field has nothing but its frame to say where it starts, so WCAG
    1.4.11 asks that frame for 3:1 against the ground behind it. --rule is a
    hairline meant for rhythm, not for a boundary: measured against --bg it is
-   1.37:1 on the dial and 1.32:1 on paper, and even prefers-contrast:more only
+   1.37:1 on Night and 1.32:1 on Dawn, and even prefers-contrast:more only
    lifts it to 2.09 / 2.07. --ink-dim — the same ink the field's own label is
-   set in — measures 6.49:1 and 5.15:1, so the field frame is drawn with that
-   and hover steps up to full --ink. (Rules between rows keep --rule: a
-   divider is decoration, a control boundary is not.) */
+   set in — measures 5.79:1 on Night's raised surface and 5.09:1 on Dawn's, so
+   the field frame is drawn with that and hover steps up to full --ink. (Rules
+   between rows keep --rule: a divider is decoration, a control boundary is
+   not.) The fill moved from the page ground to the raised surface, which is
+   the surface those two figures are measured against, and the corner is the
+   12px of a control — both of them the reason a field now reads as something
+   you can type in rather than as a box someone drew. */
 input[type="text"],
 input[type="search"],
 input[type="number"],
@@ -943,18 +1189,50 @@ input[type="month"],
 select,
 textarea {
   width: 100%;
-  min-height: 36px;
-  padding: 6px 8px;
-  background: var(--bg);
+  min-height: 40px;
+  padding: 8px var(--s1);
+  background: var(--surface-2);
   color: var(--ink);
   border: 1px solid var(--ink-dim);
-  border-radius: var(--radius);
+  border-radius: var(--radius-control);
   font-size: var(--t-body);
 }
 
 textarea {
   line-height: var(--lh-body);
   resize: vertical;
+}
+
+/* The file control is the one input the browser draws for us, and left alone
+   it lands as a grey system box with a 26px hit area — on the data screen,
+   next to a 40px primary button. The box itself keeps the UA's layout, because
+   the words beside the button ("No file chosen") are the UA's own and are how
+   a reader confirms what they picked; only the button inside it is dressed,
+   and it takes the quiet button's clothes exactly. */
+input[type="file"] {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  font-size: var(--t-sm);
+  color: var(--ink-dim);
+}
+
+input[type="file"]::file-selector-button {
+  margin-right: var(--s1);
+  min-height: 40px;
+  padding: 0 var(--s2);
+  background: var(--surface-2);
+  color: var(--ink);
+  border: 1px solid var(--ink-faint);
+  border-radius: var(--radius-control);
+  font: inherit;
+  font-size: var(--t-sm);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+input[type="file"]::file-selector-button:hover {
+  border-color: var(--ink-dim);
 }
 
 input:hover,
@@ -969,7 +1247,7 @@ textarea:hover {
 
 input[type="checkbox"],
 input[type="radio"] {
-  accent-color: var(--dial);
+  accent-color: var(--accent);
   width: 18px;
   height: 18px;
 }
@@ -978,13 +1256,20 @@ input[type="radio"] {
   display: flex;
   align-items: center;
   gap: var(--s1);
-  min-height: 36px;
+  min-height: 40px;
   font-size: var(--t-sm);
 }
 
-/* Buttons: 1px border, 2px radius, no shadow. The primary is amber ground
-   with page-ground ink — measured at 9.6:1 on the dial theme and 5.2:1 on
-   paper, so it clears 4.5:1 in both. */
+/* Buttons: the raised surface, a 12px corner, 600 weight, no shadow — depth is
+   for things that hold a reading, and a button is already legible as a
+   button. The primary paints the accent as a ground with the page ground as
+   its ink, measured at 7.91:1 on Night, 5.85:1 on Dawn and 8.11:1 on Prism.
+   The frame is --ink-faint rather than --rule for the same reason the field
+   frame is --ink-dim: WCAG 1.4.11 asks a control's boundary for 3:1 against
+   what is behind it, and --rule is a rhythm hairline that measures 1.3:1 on
+   both grounds. --ink-faint is the quietest ink that clears the bar (3.16:1
+   on Night's raised surface, 3.40:1 on Dawn's, more against either page
+   ground), which is why tokens.css names controls as its home. */
 .btn,
 .picker > button,
 .period > button {
@@ -992,16 +1277,19 @@ input[type="radio"] {
   align-items: center;
   justify-content: center;
   gap: var(--s1);
-  min-height: 36px;
+  min-height: 40px;
   padding: 0 var(--s2);
-  background: none;
+  background: var(--surface-2);
   color: var(--ink);
-  border: 1px solid var(--rule);
-  border-radius: var(--radius);
+  border: 1px solid var(--ink-faint);
+  border-radius: var(--radius-control);
   font-size: var(--t-sm);
-  font-weight: 500;
+  font-weight: 600;
   cursor: pointer;
-  transition: opacity var(--dur-fast) var(--ease);
+  transition:
+    background-color var(--dur-fast) var(--ease),
+    border-color var(--dur-fast) var(--ease),
+    color var(--dur-fast) var(--ease);
 }
 
 /* .picker__select is listed here too: it wears the button frame, not the field
@@ -1011,48 +1299,67 @@ input[type="radio"] {
 .picker > button:hover,
 .period > button:hover,
 .picker__select:hover {
-  border-color: var(--rule-strong);
+  border-color: var(--ink-dim);
 }
 
 .btn.is-primary {
-  background: var(--dial);
+  background: var(--accent);
   color: var(--bg);
-  border-color: var(--dial);
-  font-weight: 600;
+  border-color: var(--accent);
+  font-weight: 700;
+}
+
+/* The primary is the only control that lifts, and only because it is the one
+   the screen is asking you to press. */
+.btn.is-primary:not([disabled]):not([aria-disabled="true"]) {
+  box-shadow: var(--shadow);
 }
 
 .btn.is-danger {
+  background: none;
   color: var(--over);
   border-color: var(--over);
 }
 
 .btn.is-quiet {
+  background: none;
   border-color: transparent;
   color: var(--ink-dim);
   padding: 0 var(--s1);
 }
 
 .btn.is-quiet:hover {
+  background: var(--surface-2);
   color: var(--ink);
-  border-color: var(--rule);
+  border-color: var(--ink-faint);
 }
 
 .btn[disabled],
 .btn[aria-disabled="true"] {
-  color: var(--ink-dim);
+  background: none;
+  color: var(--ink-faint);
   border-color: var(--rule);
   cursor: default;
 }
 
+/* A full-width row in a stacked list of choices — the empty states' actions
+   and the limits page's first offer. It is a row, so it keeps the list card's
+   own corner rather than a square edge, and the list hands out the gaps. */
 .btn.is-row {
   width: 100%;
+  flex-wrap: wrap;
   justify-content: flex-start;
-  min-height: 44px;
-  border-color: transparent;
-  border-top: 1px solid var(--rule);
-  border-radius: 0;
-  font-weight: 400;
+  min-height: 48px;
+  padding: var(--s1) var(--s2);
+  background: var(--surface-2);
+  border-color: var(--ink-faint);
+  border-radius: var(--radius-control);
+  font-weight: 600;
   font-size: var(--t-body);
+}
+
+.btn.is-row:hover {
+  border-color: var(--ink-dim);
 }
 
 .period {
@@ -1079,42 +1386,45 @@ input[type="radio"] {
 /* The header select wears the same frame as the buttons beside it, so the row
    reads as one instrument rather than a form dropped into a toolbar. */
 .picker__select {
-  min-height: 36px;
+  min-height: 40px;
   padding: 0 var(--s2);
-  background: none;
+  background: var(--surface-2);
   color: var(--ink);
-  border: 1px solid var(--rule);
-  border-radius: var(--radius);
+  border: 1px solid var(--ink-faint);
+  border-radius: var(--radius-control);
   font: inherit;
   font-size: var(--t-sm);
-  font-weight: 500;
+  font-weight: 600;
   cursor: pointer;
 }
 
+/* The chosen one of a set of toggles: the accent on the surface it already
+   has, so the set reads as a segmented control with one segment lit. */
 .picker > button.is-active {
-  color: var(--ink);
-  border-color: var(--rule-strong);
+  color: var(--accent);
+  border-color: var(--accent);
 }
 
 /* -------------------------------------------------------------- quick row
-   The row that replaced the entry dialog. One line of fields between two 1px
-   rules — no box, no plate, no shadow — read on the ledger's own measures: the
-   amount field is exactly --amount-col wide and right aligned, so the digits a
-   reader types sit in the same column the saved rows print them in. */
+   The row that replaced the entry dialog, and now the sheet that replaced the
+   row: the raised surface, a 14px corner and one soft shadow, because this is
+   where a reader puts something INTO the app and it should look like the place
+   that happens. The amount field is still exactly --amount-col wide and right
+   aligned, so the digits a reader types sit in the same column the saved rows
+   print them in.
+   The ledger variant no longer hangs 72px into the day gutter: a card has its
+   own left edge, and indenting the fields inside it only left a dead band
+   where a reader looks for the first field. The day gutter is for day heads. */
 .quickrow {
-  border-top: 1px solid var(--rule);
-  border-bottom: 1px solid var(--rule);
-  padding: var(--s1) 0;
+  padding: var(--s2);
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-box);
+  box-shadow: var(--shadow);
   /* Where a keyboard-driven scrollIntoView is allowed to stop: clear of the
      sticky filter bar above and of the fixed rail below. */
   scroll-margin-top: calc(var(--s5) + 44px);
   scroll-margin-bottom: calc(var(--rail-h) + var(--s3));
-}
-
-/* Hangs from the same left line the day-grouped rows hang from, so the entry
-   line and the lines already written read as one ledger. */
-.quickrow--ledger {
-  padding-left: var(--day-col);
 }
 
 .quickrow__fields {
@@ -1196,15 +1506,16 @@ input[type="radio"] {
 }
 
 /* The folded sheet is absent from the DOM, so this rule only ever dresses an
-   open one. A second line under the row, divided by one more hairline. */
+   open one. A second line under the row, divided by the hairline meant for a
+   divider INSIDE a surface rather than the one that bounds a surface. */
 .quickrow__extra {
   display: flex;
   flex-wrap: wrap;
   align-items: stretch;
   gap: var(--s1);
-  margin-top: var(--s1);
-  padding-top: var(--s1);
-  border-top: 1px solid var(--rule);
+  margin-top: var(--s2);
+  padding-top: var(--s2);
+  border-top: 1px solid var(--rule-soft);
 }
 
 /* Errors get a lane of their own under the row rather than a sentence stuffed
@@ -1243,17 +1554,17 @@ input[type="radio"] {
 .inlinevalue__input {
   grid-area: 1 / 1;
   width: 100%;
-  min-height: 36px;
+  min-height: 40px;
   padding: 4px var(--s1);
   background: none;
   color: var(--ink);
   font: inherit;
   font-size: var(--t-amount);
-  font-weight: 500;
+  font-weight: 600;
   line-height: 1.2;
   text-align: right;
   border: 1px solid transparent;
-  border-radius: var(--radius);
+  border-radius: var(--radius-control);
 }
 
 /* Closed, the reading looks like a reading: one hairline under it is the only
@@ -1264,11 +1575,12 @@ input[type="radio"] {
 }
 
 .inlinevalue__btn:hover {
+  background: var(--surface-2);
   border-color: var(--ink-dim);
 }
 
 .inlinevalue__input {
-  background: var(--bg);
+  background: var(--surface-2);
   border-color: var(--ink-dim);
 }
 
@@ -1294,16 +1606,23 @@ input[type="radio"] {
   color: var(--over);
 }
 
-/* ---------------------------------------------------- notices, undo, strip */
+/* ---------------------------------------------------- notices, undo, strip
+   A notice is a card with a 4px edge in the ink of what it is about, and it
+   does NOT lift: it is a sentence about the page it is sitting on, not a thing
+   floating above it. The edge is wide enough to be a colour rather than a
+   hairline, and the kind is also in the words — colour is never the only
+   carrier. The 4px is reserved by the base rule, so a notice with no kind
+   takes exactly the same space as one with. */
 .notice {
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
   gap: var(--s2);
-  padding: var(--s1) var(--s2);
-  border-top: 1px solid var(--rule);
-  border-bottom: 1px solid var(--rule);
-  border-left: 2px solid transparent;
+  padding: var(--s2);
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-left: 4px solid var(--rule-strong);
+  border-radius: var(--radius-box);
   font-size: var(--t-sm);
 }
 
@@ -1337,7 +1656,7 @@ input[type="radio"] {
 }
 
 .notice.is-sample {
-  border-left-color: var(--gauge);
+  border-left-color: var(--in);
 }
 
 /* The one live region. Nothing ever flies in from a corner: the undo band
@@ -1353,15 +1672,20 @@ input[type="radio"] {
   margin: 0;
 }
 
+/* The undo band is the one thing in the app that really is floating above the
+   page — it belongs to an action that just happened rather than to the list
+   under it — so it is the one strip that takes a shadow. */
 .undo {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: var(--s2);
-  padding: var(--s1) 0;
-  border-top: 1px solid var(--rule);
-  border-bottom: 1px solid var(--rule);
+  padding: var(--s1) var(--s2);
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-box);
+  box-shadow: var(--shadow-lg);
   font-size: var(--t-sm);
 }
 
@@ -1370,11 +1694,15 @@ input[type="radio"] {
 }
 
 /* The countdown as a rule that shortens: ui.js sets its width once a second.
-   A full-width flex item, so it takes the line under the band's own words. */
+   A full-width flex item, so it takes the line under the band's own words.
+   It is furniture, not a reading, so it keeps the grey of a rule — a 3px
+   accent bar shrinking under a sentence would read as progress toward
+   something rather than as time running out on an offer. */
 .undo__bar {
   flex: none;
-  height: 2px;
+  height: 3px;
   background: var(--rule-strong);
+  border-radius: var(--pill);
 }
 
 .noscript {
@@ -1386,15 +1714,20 @@ input[type="radio"] {
   line-height: var(--lh-prose);
 }
 
-/* ----------------------------------------------------------------- dialog */
+/* ----------------------------------------------------------------- dialog
+   A sheet: the raised surface, a 14px corner and the deeper shadow, because
+   this is the only element in the app that genuinely sits above everything
+   else. There are very few of these left — confirming a deletion, and little
+   else — since the entry dialog became the quick row. */
 .dialog {
   width: calc(100% - 2 * var(--gutter));
   max-width: 560px;
   padding: 0;
-  background: var(--bg);
+  background: var(--surface);
   color: var(--ink);
-  border: 1px solid var(--rule-strong);
-  border-radius: 0;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-box);
+  box-shadow: var(--shadow-lg);
 }
 
 .dialog::backdrop {
@@ -1407,7 +1740,7 @@ input[type="radio"] {
   justify-content: space-between;
   gap: var(--s2);
   padding: var(--s2);
-  border-bottom: 1px solid var(--rule);
+  border-bottom: 1px solid var(--rule-soft);
 }
 
 /* Without a rule of its own this one lands on the browser default: a filled
@@ -1425,13 +1758,14 @@ input[type="radio"] {
   background: none;
   color: var(--ink-dim);
   border: 1px solid transparent;
-  border-radius: var(--radius);
+  border-radius: var(--pill);
   font-size: var(--t-body);
   line-height: 1;
   cursor: pointer;
 }
 
 .dialog__close:hover {
+  background: var(--surface-2);
   color: var(--ink);
   border-color: var(--rule-strong);
 }
@@ -1446,25 +1780,35 @@ input[type="radio"] {
   justify-content: flex-end;
   gap: var(--s1);
   padding: var(--s2);
-  border-top: 1px solid var(--rule);
+  border-top: 1px solid var(--rule-soft);
 }
 
 /* ------------------------------------------------------------ empty state
    G9: the ledger's rules are already printed, the lines are simply empty.
-   Serif prose sits on them the way handwriting sits on ruled paper. */
+   The card is the page of the notebook and the ghost rows are its ruling, so
+   an empty screen looks like somewhere to write rather than like a failure.
+   The serif is gone — there is one family now — and the prose carries itself
+   on size and measure instead. */
 .empty {
   position: relative;
-  max-width: 520px;
-  padding: var(--s2) 0;
+  max-width: 560px;
+  padding: var(--s3) var(--s2);
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow);
 }
 
+/* The ruling is drawn inside the card, so it takes the hairline meant for a
+   divider on a surface. It is behind every word of the copy and takes no
+   pointer events, which is what lets it run under the action rows. */
 .empty__ghost {
   position: absolute;
   z-index: 0;
   top: 0;
   left: 0;
   right: 0;
-  border-top: 1px solid var(--rule);
+  border-top: 1px solid var(--rule-soft);
   pointer-events: none;
 }
 
@@ -1476,14 +1820,14 @@ input[type="radio"] {
 .ghost__row {
   display: grid;
   grid-template-columns: repeat(var(--ghost-cols, 3), minmax(0, 1fr));
-  border-bottom: 1px solid var(--rule);
+  border-bottom: 1px solid var(--rule-soft);
 }
 
 /* Half height and a stronger rule under it: the shape of a column-heading
    row, with nothing written in it. */
 .ghost__head {
   height: calc(var(--row-h) / 2);
-  border-bottom-color: var(--rule-strong);
+  border-bottom-color: var(--rule);
 }
 
 .ghost__row {
@@ -1491,7 +1835,7 @@ input[type="radio"] {
 }
 
 .ghost__cell + .ghost__cell {
-  border-left: 1px solid var(--rule);
+  border-left: 1px solid var(--rule-soft);
 }
 
 /* One lift for the whole copy block, so the ruled lines stay behind every
@@ -1504,8 +1848,9 @@ input[type="radio"] {
 .empty__heading {
   font-family: var(--font-prose);
   font-size: var(--t-prose-h);
-  font-weight: 400;
-  line-height: 1.3;
+  font-weight: 700;
+  line-height: 1.25;
+  letter-spacing: -0.02em;
 }
 
 .empty__body {
@@ -1515,20 +1860,24 @@ input[type="radio"] {
   line-height: var(--lh-prose);
 }
 
-/* Three real actions as full-width rows, not a row of buttons side by side. */
+/* Three real actions as full-width rows, not a row of buttons side by side.
+   The rows are separated by a gap now that each one has a corner of its own;
+   the stacked hairlines they used to share would have cut across the ruling
+   behind them twice over. */
 .empty__actions {
-  margin-top: var(--s2);
+  margin-top: var(--s3);
   display: grid;
+  gap: var(--s1);
 }
 
-.empty__actions .btn.is-row:last-child {
-  border-bottom: 1px solid var(--rule);
-}
-
-/* The label carries the action, the hint says what it costs. */
+/* The label carries the action, the hint says what it costs — so the hint is
+   pushed to the far end of the row and set in the quieter ink. */
 .empty__action-hint {
+  margin-left: auto;
+  padding-left: var(--s2);
   color: var(--ink-dim);
   font-size: var(--t-sm);
+  font-weight: 400;
 }
 
 .empty__foot {
@@ -1539,8 +1888,9 @@ input[type="radio"] {
 
 /* --------------------------------------------------------------- dropzone */
 .dropzone {
-  border: 1px dashed var(--rule);
-  border-radius: 0;
+  background: var(--surface);
+  border: 1px dashed var(--rule-strong);
+  border-radius: var(--radius-box);
   padding: var(--s3) var(--s2);
   text-align: center;
   font-size: var(--t-sm);
@@ -1549,33 +1899,46 @@ input[type="radio"] {
 
 /* Inset outline instead of a border: a drag can never nudge the layout. */
 .is-dropping {
-  outline: 1px dashed var(--dial);
-  outline-offset: -1px;
+  outline: 2px dashed var(--accent);
+  outline-offset: -2px;
 }
 
 .dropzone.is-dropping {
-  border-color: var(--dial);
+  border-color: var(--accent);
   color: var(--ink);
 }
 
-/* ------------------------------------------------------------- wizard/data */
+/* ------------------------------------------------------------- wizard/data
+   The import steps are a row of pills: the one you are on is filled, the rest
+   are quiet. Numbered markers are deliberately absent — the steps are a
+   genuine sequence, so the ORDER is already in the words and in the line. */
 .steps {
   display: flex;
   flex-wrap: wrap;
-  gap: var(--s2);
-  padding-bottom: var(--s1);
-  border-bottom: 1px solid var(--rule);
+  gap: var(--s1);
   font-size: var(--t-sm);
   color: var(--ink-dim);
 }
 
+.steps__item {
+  padding: 4px var(--s2);
+  border-radius: var(--pill);
+  background: var(--surface-2);
+}
+
 .steps__item.is-active {
-  color: var(--ink);
+  background: var(--accent);
+  color: var(--bg);
+  font-weight: 600;
 }
 
 .preview {
   overflow-x: auto;
   margin-top: var(--s2);
+  padding: 0 var(--s2);
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-box);
 }
 
 .preview .table {
@@ -1584,18 +1947,734 @@ input[type="radio"] {
 
 .storage {
   display: grid;
-  gap: 4px;
+  gap: var(--s1);
   font-size: var(--t-sm);
 }
 
+/* A track and a fill, both pill-shaped, because this is the one bar in the app
+   that is a proportion of a fixed whole rather than a reading on a scale. */
 .storage__bar {
-  height: 6px;
+  height: 8px;
+  background: var(--surface-2);
   border: 1px solid var(--rule);
+  border-radius: var(--pill);
+  overflow: hidden;
 }
 
 .storage__fill {
   height: 100%;
-  background: var(--dial);
+  background: var(--accent);
+  border-radius: var(--pill);
+}
+
+/* ------------------------------------------------- net worth, accounts, holdings
+   The §10 class contract, written before the views that emit it. Three rules
+   hold the whole block together:
+
+   - A record's own colour arrives as an inline `style="--tone: #8AA6FF"` on
+     the element that owns it. Every rule here reads var(--tone), which :root
+     defaults to the accent, so a record that was given no colour still paints.
+   - Children are placed by explicit grid area, not by document order. Two
+     agents are writing this markup from the same contract I am writing these
+     rules from, and a layout that depends on which sibling comes first is a
+     layout that breaks on a reasonable reading of the same sentence.
+   - Shape says the role: a summary card takes 18px and a shadow, a list card
+     takes 14px and holds its rows on soft dividers, a chip and a tag are
+     pills, and nothing inside a list gets a shadow of its own. */
+
+/* Any raised summary surface. A view that wants the shape without the lift
+   adds .card--flat — a sheet standing on the page rather than above it. */
+.card {
+  padding: var(--s2);
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow);
+}
+
+.card--flat {
+  box-shadow: none;
+}
+
+/* The net-worth card. One of the two places in this file allowed a gradient:
+   a wash from the raised surface into the card surface, so the number at the
+   top of the panel reads as the deepest thing on the page. It is placed after
+   .card on purpose — a view may carry both classes, and this one has to win.
+
+   Assumed markup: label, value, split (two parts), phase, day as children in
+   any order; every one of them is optional. */
+.networth {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  column-gap: var(--s2);
+  row-gap: var(--s1);
+  padding: var(--s2);
+  background: linear-gradient(158deg, var(--surface-2) 0%, var(--surface) 64%);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-lg);
+}
+
+.networth__label {
+  grid-area: 1 / 1 / 2 / 2;
+  align-self: end;
+  font-size: var(--t-label);
+  font-weight: 600;
+  color: var(--ink-dim);
+}
+
+.networth__value {
+  grid-area: 2 / 1 / 3 / 2;
+  font-size: var(--t-big);
+  font-weight: 700;
+  line-height: var(--lh-tight);
+  letter-spacing: -0.02em;
+}
+
+/* 16px between the two parts, not 24: they are a pair read together and the
+   wider gap was what pushed them onto two lines at 375px, which cost the card
+   a whole row to say two things that fit on one. */
+.networth__split {
+  grid-area: 3 / 1 / 4 / 2;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px var(--s2);
+  font-size: var(--t-sm);
+  color: var(--ink-dim);
+}
+
+/* Assets and liabilities are told apart by a dot in the income and expense
+   inks, which the two words beside them already say in full — the dot is the
+   fast read, never the only one. */
+.networth__part {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--s1);
+}
+
+.networth__part::before {
+  content: "";
+  align-self: center;
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: var(--pill);
+  background: var(--ink-faint);
+}
+
+.networth__part.is-assets::before {
+  background: var(--in);
+}
+
+.networth__part.is-liabilities::before {
+  background: var(--out);
+}
+
+/* The waxing moon: the one decorative licence in the app, and the reason it is
+   allowed is that it is a reading — the lit fraction IS the fraction of the
+   period gone. It takes the accent because it is Moon's own mark. */
+.networth__phase {
+  grid-area: 1 / 2 / 3 / 3;
+  justify-self: end;
+  align-self: center;
+  width: 44px;
+  height: 44px;
+  flex: none;
+  color: var(--accent);
+}
+
+.networth__phase svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.networth__day {
+  grid-area: 3 / 2 / 4 / 3;
+  justify-self: end;
+  align-self: center;
+  text-align: right;
+  font-size: var(--t-sm);
+  color: var(--ink-dim);
+}
+
+/* Account chips: the one horizontal scroller in the app. It is the pattern
+   the reference apps got right — the balances you keep an eye on, on one line,
+   at the top of the page. The vertical padding is not decoration: the scroller
+   clips what overflows it, and without the padding it would clip the chips'
+   own shadows into a hard line. */
+.chips {
+  display: flex;
+  gap: var(--s1);
+  overflow-x: auto;
+  padding: var(--s1) 2px;
+  scroll-snap-type: x proximity;
+  /* A visible bar under four chips is noise, and nobody has to drag it to
+     reach one. ui.js builds the strip as a toolbar with a roving tabindex: the
+     whole strip is ONE tab stop, the arrow keys walk the chips inside it, and
+     the browser scrolls each one into view as it takes focus. So the scrollbar
+     carries nothing a keyboard reader depends on. */
+  scrollbar-width: none;
+}
+
+.chips::-webkit-scrollbar {
+  display: none;
+}
+
+.chip {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s1);
+  min-height: 44px;
+  padding: var(--s1) var(--s2) var(--s1) var(--s1);
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: var(--pill);
+  box-shadow: var(--shadow);
+  scroll-snap-align: start;
+  transition: border-color var(--dur-fast) var(--ease);
+}
+
+.chip:hover {
+  border-color: var(--rule-strong);
+}
+
+/* The trailing "+ Account" chip is an invitation, not a balance: no ground, a
+   dashed edge, and the accent's ink. */
+.chip.is-add {
+  background: none;
+  border-style: dashed;
+  border-color: var(--rule-strong);
+  box-shadow: none;
+  color: var(--accent);
+  padding-left: var(--s2);
+}
+
+.chip__name {
+  font-size: var(--t-sm);
+  color: var(--ink-dim);
+  white-space: nowrap;
+}
+
+.chip__value {
+  font-size: var(--t-amount);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+/* Accounts: a grid that collapses to one column on a phone without a media
+   query. The minimum is 260px and it is measured, not chosen: the card's one
+   line that cannot fold is its balance beside the control that edits it, and
+   at --t-big a six-figure negative balance is 168px of glyphs, 18px of the
+   control's own frame, an 8px gap and a 43px button — 237px of content inside
+   16px of padding on each side. At the old 220px that line broke on every
+   wide screen and cost each card a whole extra row. */
+.accounts {
+  display: grid;
+  gap: var(--s2);
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+}
+
+/* The vertical padding is the small step and the horizontal one is not: the
+   card's four rows are already 44px targets and 13px sentences with their own
+   leading, so the air above and below them was the only part of its 184px a
+   reader got nothing for. Sideways it keeps the full 16px, because that is
+   what holds the icon off the edge and makes the thing read as a card. */
+.account {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  column-gap: var(--s2);
+  row-gap: 4px;
+  padding: var(--s1) var(--s2);
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-box);
+  box-shadow: var(--shadow);
+}
+
+.account__name {
+  grid-area: 1 / 2 / 2 / 3;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--t-body);
+  font-weight: 600;
+}
+
+.account__kind {
+  grid-area: 2 / 2 / 3 / 3;
+  justify-self: start;
+}
+
+/* 4px on top of the card's own 4px row gap. The balance is the biggest thing
+   on the card and the kind pill above it the smallest, so the pair needs a
+   little more than the rows that are all one size — but not the 8px it used
+   to take, which read as a gap in the card rather than as a step. */
+/* Two tracks, not a wrapping flex row. views.accounts.js puts the card's one
+   management control on this row beside the balance, and .form__actions —
+   which it also carries — would drop that control onto a line of its own the
+   moment the figure grew, costing the card 44px for a seven-figure balance or
+   a narrow column of the grid. A 1fr track hands the figure whatever is left
+   after the control instead, so the row is one line at every width and the
+   card in a four-column grid is exactly as tall as the card in one. */
+.account__value {
+  grid-area: 3 / 1 / 4 / 3;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: var(--s1);
+  margin-top: 4px;
+  font-size: var(--t-big);
+  font-weight: 700;
+  line-height: var(--lh-tight);
+  letter-spacing: -0.02em;
+}
+
+/* The balance is a control, not a printed figure: views.accounts.js builds it
+   with UI.inlineValue so a reader can correct it against a bank statement.
+   That control declares --t-amount on both of its halves, and a declaration on
+   the element beats a size inherited from .account__value — so the one number
+   the card exists for was rendering at 15px, 16px on a phone, under a name set
+   at 16px. The size belongs to the cell, so the cell hands it to both halves
+   and to the wrapper that measures the column from it. */
+.account__value .inlinevalue,
+.account__value .inlinevalue__btn,
+.account__value .inlinevalue__input {
+  font-size: var(--t-big);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+/* The `ch` track keeps its measure but stops being a floor. That measure is
+   what makes the control exactly as wide open as closed, so it has to stay —
+   but `ch` is the width of a DIGIT, and a money string spends a third of its
+   glyphs on a symbol, two separators and a sign, every one of them narrower.
+   At 15px the slack was a few pixels; at 28px the track reserved 256px for a
+   168px balance and shouldered the button off the row. Capping it with the
+   cell lets the control take the smaller of what it wants and what there is,
+   and the figure it holds fits in the smaller measure in every ordinary case. */
+.account__value .inlinevalue {
+  grid-template-columns: minmax(0, calc((var(--iv-ch) + 1) * 1ch + 2 * var(--s1) + 2px));
+  min-width: 0;
+}
+
+/* Three things the two halves have to agree on.
+
+   The padding is restated because the open half does not take the 4px the
+   closed one does: `input[type="text"]` asks for 8px, an attribute selector
+   outranks a class, and nothing could see it while both halves were shorter
+   than their 40px floor — at 28px it makes the card jump 8px the moment a
+   reader opens the editor.
+
+   The alignment is left. inlineValue aligns right because it usually stands in
+   a column of amounts that have to agree on where the decimal mark falls, and
+   a card has no such column: each card's track is measured from its own
+   digits, so right-aligned the four balances neither started nor ended on the
+   same pixel and each sat adrift in the middle of its card. Left-aligned they
+   all begin on the card's own text line, under the name.
+
+   And the figure never breaks. Left to itself a line may break after a hyphen,
+   so a negative balance can put its minus sign alone on the line above the
+   digits — where it reads as a positive one. */
+.account__value .inlinevalue__btn,
+.account__value .inlinevalue__input {
+  padding: 4px var(--s1);
+  text-align: left;
+  white-space: nowrap;
+}
+
+.account__flow {
+  grid-area: 4 / 1 / 5 / 3;
+  font-size: var(--t-sm);
+  color: var(--ink-dim);
+}
+
+/* An archived account still has a balance worth reading, so it is not hidden
+   and not greyed out of legibility: it loses its lift and takes a dashed edge,
+   which says "put away" in a form that survives being printed. */
+.account.is-archived {
+  box-shadow: none;
+  border-style: dashed;
+}
+
+.account.is-archived .account__name {
+  color: var(--ink-dim);
+}
+
+/* UI.expandRow: a row that opens where it stands. It is three nodes — a
+   wrapper, a <button> summary and a panel — and a view that has a look of its
+   own passes its own two class names, which is what the holdings list does.
+   What is left here is the part no view should have to repeat: the wrapper
+   carries nothing but its children (it must stay a plain block, or the
+   summary's grid and the panel below it stop stacking), and the default
+   summary has to be undressed of the raised grey box, the centred text and the
+   outset frame a <button> arrives with. The 44px floor is on the phone with
+   every other target.
+   These names are what ui.js writes when a view names nothing. The sizes and
+   the ink are the row's, not the panel's: whatever is inside the panel brings
+   its own. */
+.expandrow__summary {
+  display: block;
+  width: 100%;
+  min-height: 40px;
+  padding: var(--s1) var(--s2);
+  text-align: left;
+  background: none;
+  border: 0;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+
+.expandrow__summary:hover {
+  background: var(--surface-2);
+}
+
+/* The open ground goes on the WRAPPER, so the summary and the panel under it
+   stand on one surface. expandRow marks both nodes, and marking only the
+   summary left an open panel dropping back to the card's own ground halfway
+   down the row. */
+.expandrow.is-open {
+  background: var(--surface-2);
+}
+
+/* Holdings are rows in ONE list card, not a card each: a portfolio is read by
+   comparing its lines, and fifteen shadowed boxes is the thing this redesign
+   is getting away from. The dividers are the hairline meant for use inside a
+   surface. */
+.holdings {
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-box);
+  box-shadow: var(--shadow);
+  /* So that the first and last rows' own fills are cut by the card's corner
+     instead of poking out of it. A focused row keeps its ring: the rule up in
+     the focus section insets it. */
+  overflow: hidden;
+}
+
+.holding {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  column-gap: var(--s2);
+  row-gap: 2px;
+  align-items: center;
+  width: 100%;
+  min-height: 56px;
+  padding: var(--s1) var(--s2);
+  text-align: left;
+  background: none;
+  border: 0;
+  font: inherit;
+  color: inherit;
+}
+
+/* The divider is hung on whatever the list's children happen to be, not on
+   `.holding + .holding`, because those two are never siblings: UI.expandRow
+   wraps each row in an `.expandrow` div and puts the summary and the panel
+   inside it, so the pair rule matched nothing and the list drew with no
+   hairlines at all. The child selector is also the honest one — a divider
+   belongs to the list, and the list is the only element that knows how many
+   rows it has. */
+.holdings > * + * {
+  border-top: 1px solid var(--rule-soft);
+}
+
+.holding:hover {
+  background: var(--surface-2);
+}
+
+.holding.is-open {
+  background: var(--surface-2);
+}
+
+.holding__name {
+  grid-area: 1 / 2 / 2 / 3;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--t-body);
+  font-weight: 600;
+}
+
+.holding__qty {
+  grid-area: 2 / 2 / 3 / 3;
+  font-size: var(--t-sm);
+  color: var(--ink-dim);
+}
+
+.holding__value {
+  grid-area: 1 / 3 / 2 / 4;
+  justify-self: end;
+  font-size: var(--t-amount);
+  font-weight: 600;
+}
+
+/* The sign is in the text as well as in the ink: --in and --out are two
+   luminances apart as well as two hues, and the number carries its own + or -. */
+.holding__gain {
+  grid-area: 2 / 3 / 3 / 4;
+  justify-self: end;
+  font-size: var(--t-sm);
+  color: var(--ink-dim);
+}
+
+.holding.is-up .holding__gain {
+  color: var(--in);
+}
+
+.holding.is-down .holding__gain {
+  color: var(--out);
+}
+
+/* The panel that opens under a row on tap. It is divided from the summary by
+   one soft rule, so the expansion reads as more of the same row rather than as
+   a new card appearing, and it keeps the summary's own side padding so its
+   first word starts under the row's first word.
+
+   It is placed with padding and NOT with a grid area. The area it used to ask
+   for (3 / 1 / 4 / -1) is a child's placement inside the .holding grid, and
+   the panel is not a child of .holding: UI.expandRow makes it the second child
+   of the .expandrow wrapper, a plain block. So the placement was discarded
+   and the panel rendered full-bleed, its text starting 16px to the left of
+   everything above it. */
+.holding__detail,
+.expandrow__detail {
+  padding: var(--s1) var(--s2) var(--s2);
+  /* --rule, not the softer hairline the rows between them take: a panel is
+     only ever on screen while its row is open, and an open row stands on
+     --surface-2, which on Dawn is the very colour --rule-soft resolves to. The
+     divider would be invisible on the one surface it is always drawn on. */
+  border-top: 1px solid var(--rule);
+  font-size: var(--t-sm);
+}
+
+.holding__detail > * + *,
+.expandrow__detail > * + * {
+  margin-top: var(--s1);
+}
+
+/* The investments summary. A summary card, so 18px and a shadow, and the gain
+   is tinted from either the card or the reading itself — the two agents
+   writing these views may reasonably hang .is-up on either one. */
+.invsum {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  column-gap: var(--s2);
+  row-gap: var(--s1);
+  padding: var(--s2);
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow);
+}
+
+.invsum__value {
+  grid-area: 1 / 1 / 2 / 2;
+  font-size: var(--t-big);
+  font-weight: 700;
+  line-height: var(--lh-tight);
+  letter-spacing: -0.02em;
+}
+
+.invsum__cost {
+  grid-area: 2 / 1 / 3 / 2;
+  font-size: var(--t-sm);
+  color: var(--ink-dim);
+}
+
+.invsum__gain {
+  grid-area: 1 / 2 / 3 / 3;
+  align-self: center;
+  justify-self: end;
+  text-align: right;
+  font-size: var(--t-mid);
+  font-weight: 700;
+}
+
+.invsum.is-up .invsum__gain,
+.invsum__gain.is-up {
+  color: var(--in);
+}
+
+.invsum.is-down .invsum__gain,
+.invsum__gain.is-down {
+  color: var(--out);
+}
+
+/* The breakdown by kind has no rules here on purpose. These three class names
+   were written against an HTML flex component — a row of <span> pills with a
+   <div> legend — and js/charts.js emits them on an SVG instead: .kindbar is
+   the svg root, .kindbar__seg a <rect> and .kindbar__key a <g>. Nothing in
+   that block reached its target. `display`, `flex-wrap` and `gap` are inert on
+   an svg root that already carries an inline `display: block`, and inert on a
+   <g> at any time; `background` and `border-radius` do not paint a <rect>,
+   which takes `fill` and `rx`; the only declaration that landed at all was a
+   height the SVG's own attribute had already set. The figure owns every number
+   it is drawn with, which is where a chart's geometry belongs — the stylesheet
+   cannot know how wide a segment is. The SVG still picks up `.chart svg` for
+   its box through the wrapper views.investments.js puts it in. */
+
+/* One small pill: an account's kind, a holding's kind, a legend entry. The dot
+   is what makes it a legend; it reads as a bullet everywhere else. */
+.tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px var(--s1);
+  background: var(--surface-2);
+  border-radius: var(--pill);
+  font-size: var(--t-label);
+  font-weight: 600;
+  color: var(--ink-dim);
+  white-space: nowrap;
+}
+
+.tag::before {
+  content: "";
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: var(--pill);
+  background: var(--tone);
+}
+
+/* The icon badge, shared by the three records that have one. The emoji sits on
+   a 22% wash of the record's own colour: enough to identify the row at a
+   glance, nowhere near enough to fight the amount beside it. The flat fill is
+   declared first for an engine that does not know color-mix(), which then
+   simply ignores the line after it. */
+.chip__icon,
+.account__icon,
+.holding__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 36px;
+  height: 36px;
+  border-radius: var(--pill);
+  background: var(--surface-2);
+  background: color-mix(in srgb, var(--tone) 22%, var(--surface-2));
+  font-size: var(--t-body);
+  line-height: 1;
+}
+
+.account__icon,
+.holding__icon {
+  grid-area: 1 / 1 / 3 / 2;
+}
+
+/* The colour picker. Ten dots from the spectrum, each one its own value: the
+   chosen one keeps a ring of the card's surface between the colour and a 2px
+   ink edge, which is the one selection mark that works on all four materials
+   and does not borrow the focus ring's job. */
+.swatch {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s1);
+}
+
+.swatch__dot {
+  width: 40px;
+  height: 40px;
+  flex: none;
+  padding: 0;
+  background: var(--tone);
+  border: 2px solid transparent;
+  border-radius: var(--pill);
+  cursor: pointer;
+}
+
+.swatch__dot[aria-pressed="true"],
+.swatch__dot[aria-checked="true"],
+.swatch__dot.is-active {
+  border-color: var(--ink);
+  box-shadow: inset 0 0 0 2px var(--surface);
+}
+
+/* The emoji grid. A fixed set in a scrolling box rather than a text field, so
+   picking an icon is a decision and not a typing exercise. */
+.emojis {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(44px, 1fr));
+  gap: 4px;
+  max-height: 232px;
+  overflow-y: auto;
+  padding: var(--s1);
+  background: var(--surface-2);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-box);
+}
+
+.emojis__one {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: var(--radius-control);
+  font-size: var(--t-mid);
+  line-height: 1;
+  cursor: pointer;
+}
+
+.emojis__one:hover {
+  background: var(--surface);
+  border-color: var(--rule);
+}
+
+.emojis__one[aria-pressed="true"],
+.emojis__one[aria-checked="true"],
+.emojis__one.is-active {
+  background: var(--surface);
+  border-color: var(--accent);
+}
+
+/* UI.emojiPicker: the grid above, folded behind a toggle that shows the icon
+   the record has now. Folded means absent from the DOM, so the sheet only ever
+   exists open and the stack below is what an open one looks like.
+
+   The toggle is .btn.is-quiet, which means no ground and a transparent frame,
+   and a quiet button whose whole label is one glyph is not a button to look
+   at — in the account card's fold it read as a stray mark between the colour
+   dots and the row under them. The frame is given back here (and only here;
+   every other quiet button in the app is sitting beside words that say what it
+   is), and the hit area is squared up to the 44px the glyph alone did not
+   reach. .btn is in the selector for weight, not for decoration: .btn.is-quiet
+   sets the transparent frame and one class cannot outrank two. */
+.emojipicker,
+.emojipicker__sheet {
+  display: grid;
+  row-gap: var(--s1);
+}
+
+.btn.emojipicker__toggle {
+  justify-self: start;
+  min-width: 44px;
+  border-color: var(--ink-faint);
+}
+
+.btn.emojipicker__toggle:hover {
+  border-color: var(--ink-dim);
+}
+
+.emojipicker__current {
+  font-size: var(--t-body);
+  line-height: 1;
+}
+
+/* The way out of the grid is a box for four code units, so it is sized for
+   four and not for the sheet: stretched to the full width of forty icons it
+   read as the main event, which it is the opposite of. */
+.emojipicker__own {
+  max-width: 14ch;
 }
 
 /* -------------------------------------------------------- dark adaptation
@@ -1702,8 +2781,8 @@ input[type="radio"] {
 }
 
 /* --------------------------------------------------- < 768px: phone layout
-   The rail becomes a fixed bottom bar of four cells: three primary sections
-   plus "Daha". The "more" items open upward as a leaf sheet. */
+   The rail becomes a fixed bottom bar: one cell per primary section plus
+   "More", which opens the rest upward as a leaf sheet. */
 @media (max-width: 767px) {
   :root {
     --gutter: 1rem;
@@ -1712,20 +2791,60 @@ input[type="radio"] {
     --cat-col: 9ch;
   }
 
+  /* The bar is fixed, so the last row of the page has to be given its height
+     back — plus the iOS home indicator's strip, which the bar also has to
+     clear. env() is 0px on every device that has no such strip, so the same
+     expression is correct everywhere. */
   body {
-    padding-bottom: calc(var(--rail-h) + var(--s3));
+    padding-bottom: calc(var(--rail-h) + var(--s3) + env(safe-area-inset-bottom, 0px));
   }
 
+  /* 640px of usable height is the whole budget, so the step between sections
+     drops one more notch here. It is still twice the 8px that parts the lines
+     inside a card, which is what keeps a section reading as a section. */
+  .view > * + * {
+    margin-top: var(--s2);
+  }
+
+  /* The header, measured: 173px before a single reading, on every screen in
+     the app. Two things buy it back. The brand gives up its own line — it is
+     83px of a 343px row and the controls were wrapping under it anyway, so
+     they are allowed to take the space beside it instead. And the two pickers
+     and the stepper give up half their side padding, which is what brings the
+     currency, the language and the theme onto one 44px line together; at 16px
+     they were 305px wide against 253px of room and took two lines of their
+     own. Every control keeps its 44px height, so nothing a thumb aims at got
+     smaller — only the air around the words did. 173px → 113px. */
   .top {
-    padding: var(--s2) var(--gutter);
+    column-gap: var(--s1);
+  }
+
+  .top__controls {
+    flex: 1 1 14rem;
+    min-width: 0;
+    justify-content: flex-end;
+    column-gap: var(--s1);
+  }
+
+  .picker > button,
+  .picker__select {
+    padding: 0 var(--s1);
+  }
+
+  /* The stepper's two arrows are a glyph each, so the padding is the whole of
+     their width: the floor is stated here rather than left to the type. */
+  .period > button {
+    min-width: 36px;
+    padding: 0 var(--s1);
   }
 
   .shell {
-    padding: var(--s2) var(--gutter) var(--s3);
+    padding: var(--s1) var(--gutter) var(--s2);
   }
 
-  .hero {
-    padding: var(--s2);
+  .hero,
+  .quickrow {
+    padding: var(--s1) var(--s2);
   }
 
   .hero__aside {
@@ -1735,6 +2854,23 @@ input[type="radio"] {
 
   .hero__value {
     margin-top: 4px;
+  }
+
+  .networth,
+  .invsum {
+    padding: var(--s1) var(--s2);
+  }
+
+  /* The chip scroller runs to both edges of the screen: the first chip starts
+     on the page's own left line, and the last one can be scrolled clear of the
+     right edge, which is how a thumb learns there is more to the right. The
+     negative margin cancels the shell's gutter and the padding puts it back
+     inside the scroller, so nothing is ever cut off at rest. */
+  .chips {
+    margin-left: calc(var(--gutter) * -1);
+    margin-right: calc(var(--gutter) * -1);
+    padding-left: var(--gutter);
+    padding-right: var(--gutter);
   }
 
   /* 44px touch targets everywhere a finger lands. */
@@ -1748,7 +2884,22 @@ input[type="radio"] {
   .dialog__close,
   .rail__item,
   .rail__more,
-  .switch {
+  .switch,
+  .holding,
+  .numbers > summary {
+    min-height: 44px;
+  }
+
+  /* A colour is picked with a thumb here, so the dot grows to the target it
+     needs rather than relying on the gap around it. */
+  .swatch__dot {
+    width: 44px;
+    height: 44px;
+  }
+
+  /* The file button is a real target on a phone too. The input around it is
+     not in the list above: its own height follows the button inside it. */
+  input[type="file"]::file-selector-button {
     min-height: 44px;
   }
 
@@ -1831,23 +2982,35 @@ input[type="radio"] {
     position: static;
   }
 
+  /* The bottom bar. Flex rather than a fixed count of grid columns: the number
+     of primary sections is index.html's business and it has already changed
+     once — `repeat(4, 1fr)` left a dead cell the day a fifth one arrived. Each
+     bar cell has a zero flex basis, so they share the width evenly however
+     many there are, and the leaf sheet's rows take a 100% basis and therefore
+     a line each.
+     It is a floating surface, so it is the one piece of chrome that takes the
+     deeper shadow, and its bottom padding carries the iOS home indicator. */
   .rail {
     position: fixed;
     z-index: 40;
     bottom: 0;
     left: 0;
     right: 0;
-    display: grid;
-    grid-template-columns: repeat(4, 1fr);
+    display: flex;
+    flex-wrap: wrap;
     align-items: stretch;
+    gap: 2px;
     /* dvh, with vh behind it for an engine that does not know the unit. vh is
        measured against the tallest viewport, so it grows and shrinks with the
        browser chrome and the layout jumps with it. */
     max-height: 70vh;
     max-height: 70dvh;
     overflow-y: auto;
-    background: var(--bg);
+    padding: 6px var(--s1);
+    padding-bottom: calc(6px + env(safe-area-inset-bottom, 0px));
+    background: var(--surface);
     border-top: 1px solid var(--rule);
+    box-shadow: var(--shadow-lg);
   }
 
   /* §8b — the second measured drift. The rail is position:fixed, so the
@@ -1864,33 +3027,43 @@ input[type="radio"] {
     display: none;
   }
 
+  /* A bar cell. The label is --t-rail-bar, one step under --t-label, and the
+     reason is measured rather than preferred: five cells of a 375px screen
+     leave 66px inside each one, and the English "Investments" is 70px at 12px
+     and 64px at 11px. It was breaking after "Investment" and putting a stray
+     "s" on a second line, which is a worse thing to read than a small word.
+     `overflow-wrap: anywhere` stays as the insurance for a sixth section or a
+     longer word, which breaks rather than putting a scrollbar inside the bar. */
   .rail__item {
+    flex: 1 1 0;
+    min-width: 0;
     justify-content: center;
-    min-height: var(--rail-h);
-    padding: 0 4px;
-    font-size: var(--t-sm);
+    min-height: 44px;
+    padding: 0 2px;
+    font-size: var(--t-rail-bar);
+    line-height: 1.2;
     text-align: center;
-    border-left: 0;
-    border-top: 2px solid transparent;
-    border-bottom: 0;
-  }
-
-  .rail__item.is-active,
-  .rail__item[aria-current="page"] {
-    border-top-color: var(--dial);
+    overflow-wrap: anywhere;
   }
 
   .rail__item[data-rail="more"] {
     display: none;
   }
 
+  /* The sixth cell of the same row of words, so it takes the same size as the
+     five beside it — a "More" one step larger than "Investments" would read as
+     the important one. */
   .rail__more {
+    flex: 1 1 0;
+    min-width: 0;
     display: flex;
-    min-height: var(--rail-h);
-    border-left: 0;
+    min-height: 44px;
+    padding: 0 2px;
+    font-size: var(--t-rail-bar);
   }
 
   .rail__more[aria-expanded="true"] {
+    background: var(--surface-2);
     color: var(--ink);
   }
 
@@ -1898,49 +3071,66 @@ input[type="radio"] {
      (order: -1), so the fixed rail grows upward from the bottom edge. */
   .rail.is-open .rail__item[data-rail="more"] {
     display: flex;
-    grid-column: 1 / -1;
+    flex: 1 1 100%;
     order: -1;
     justify-content: flex-start;
     min-height: 44px;
-    padding: 0 var(--gutter);
+    padding: 0 var(--s2);
+    font-size: var(--t-body);
     text-align: left;
-    border-top: 1px solid var(--rule);
   }
 
   .rail:has(.rail__more[aria-expanded="true"]) .rail__item[data-rail="more"] {
     display: flex;
-    grid-column: 1 / -1;
+    flex: 1 1 100%;
     order: -1;
     justify-content: flex-start;
     min-height: 44px;
-    padding: 0 var(--gutter);
+    padding: 0 var(--s2);
+    font-size: var(--t-body);
     text-align: left;
-    border-top: 1px solid var(--rule);
   }
 
+  /* The budget card keeps its corners and its colour on a phone; what it gives
+     up is the three-column grid, because 136px of name plus 176px of reading
+     does not fit beside a scale on a 375px screen.
+
+     The three parts are placed by hand rather than left to auto-placement, and
+     that is worth 40px a card. The scale asks for the full width, so a flow
+     that meets it second has to break the line to give it one — which put the
+     name, the scale and the reading on three rows, 143px of card for 100px of
+     content. Named areas put the name and its reading side by side on the
+     first row, where a reader compares them anyway, and give the scale the
+     second to itself. */
   .meter {
     grid-template-columns: minmax(0, 1fr) auto;
     row-gap: 4px;
-    padding: var(--s1) 0;
+    padding: var(--s1) var(--s2);
   }
 
-  .meter__scale {
-    grid-column: 1 / -1;
+  .meter__name {
+    grid-area: 1 / 1 / 2 / 2;
   }
 
   .meter__readout {
+    grid-area: 1 / 2 / 2 / 3;
     text-align: right;
+  }
+
+  .meter__scale {
+    grid-area: 2 / 1 / 3 / -1;
   }
 
   .meter__pct {
     display: inline;
   }
 
-  .meter__drift {
-    grid-column: 1 / -1;
-    text-align: left;
-  }
-
+  /* The drift sentence is NOT a child of the card: both views that draw one
+     put it inside .meter__readout, so the `grid-column: 1 / -1` this rule used
+     to carry addressed a cell it was never in, and the `text-align: left` that
+     came with it turned the second line of a right-aligned reading back to the
+     left for no reason anyone could see. It inherits the readout's alignment
+     now, which is the one the figure above it already uses. */
   .meter.is-over .meter__readout {
     text-align: right;
     justify-self: end;
@@ -2009,28 +3199,27 @@ input[type="radio"] {
   }
 }
 
-/* ------------------------------------------- 768–1099px: the rail as words
-   Seven words on one line, sitting on a 1px rule under the header. */
+/* ------------------------------------------- 768–1099px: the rail as a strip
+   Every section on one line above the content, each a 12px pill, with a
+   hairline under the strip to part it from the view. The strip scrolls
+   sideways rather than overflowing the page: nine sections of nowrap words
+   just about fit 768px in both languages, and "just about" is not something
+   to leave the page's own width depending on. */
 @media (min-width: 768px) and (max-width: 1099px) {
   .rail {
     flex-wrap: nowrap;
     align-items: stretch;
-    gap: clamp(var(--s1), 2vw, var(--s3));
-    padding-bottom: 0;
+    gap: 2px;
+    padding-bottom: var(--s1);
+    overflow-x: auto;
     border-bottom: 1px solid var(--rule);
   }
 
   .rail__item {
     flex: 0 1 auto;
     min-width: 0;
-    padding: 4px 0 6px;
+    padding: 4px var(--s1);
     white-space: nowrap;
-    border-left: 0;
-  }
-
-  .rail__item.is-active,
-  .rail__item[aria-current="page"] {
-    border-bottom-color: var(--dial);
   }
 
   .rail__more {
@@ -2045,34 +3234,35 @@ input[type="radio"] {
     gap: var(--s3);
   }
 
+  /* A real sidebar: the raised surface, a 14px corner, no shadow. It is chrome
+     sitting flat against the page rather than a card holding a reading, and
+     the one thing depth is for here is telling those two apart. */
   .rail {
     position: sticky;
     top: var(--s2);
     align-self: start;
     flex-direction: column;
     gap: 2px;
+    padding: var(--s1);
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-radius: var(--radius-box);
   }
 
-  /* The label starts exactly on the page's single left line; the 2px active
-     rule hangs out into the margin, the way a lab-book mark does. */
   .rail__item {
-    min-height: 28px;
-    border-bottom: 0;
-    padding-left: var(--s1);
-    margin-left: calc(var(--s1) * -1 - 2px);
-  }
-
-  .rail__item.is-active,
-  .rail__item[aria-current="page"] {
-    border-left-color: var(--dial);
+    min-height: 40px;
   }
 
   .rail__more {
     display: none;
   }
 
+  /* The one card given more room on a wide screen, because it is the one
+     holding a 60px numeral. Vertically it keeps the 16px every other card
+     uses: a tall card does not read as a calmer one, it reads as a card with
+     a hole in it. */
   .hero {
-    padding: var(--s3);
+    padding: var(--s2) var(--s3);
   }
 }
 
@@ -2121,27 +3311,43 @@ input[type="radio"] {
 
 /* ------------------------------------------------------------------ print
    Paper is a light theme with a different ink budget: named colours, no
-   amber, no plate. The rail and the controls carry no information on paper;
-   the tables under the charts carry all of it. */
+   accent, no raised surface, no shadow. The rail and the controls carry no
+   information on paper; the tables under the charts carry all of it.
+   Every theme has to be named, including the two new words — app.js may write
+   "night" or "dawn", and `:root[data-theme="night"]` in css/tokens.css
+   outweighs a bare `:root` here however late this file loads.
+   --dial and --gauge are deliberately absent: they are aliases onto --accent
+   and --in in tokens.css, a var() resolves at use time, and js/charts.js reads
+   them from inside an SVG — so blackening --accent blackens the chart's ink
+   too, and naming the old pair here would only be a second place to forget. */
 @media print {
   :root,
   :root[data-theme="dial"],
+  :root[data-theme="night"],
   :root[data-theme="paper"],
+  :root[data-theme="dawn"],
   :root[data-theme="prism"] {
     color-scheme: light;
 
     --bg: white;
-    --plate: white;
+    --surface: white;
+    --surface-2: white;
     --rule: silver;
+    --rule-soft: gainsboro;
     --rule-strong: gray;
     --ink: black;
     --ink-dim: dimgray;
-    --dial: black;
-    --gauge: dimgray;
+    --ink-faint: gray;
+    --accent: black;
+    --in: dimgray;
+    --out: black;
     --over: black;
     --flare: black;
     --warn: dimgray;
     --focus: black;
+    --tone: gray;
+    --shadow: none;
+    --shadow-lg: none;
   }
 
   body {
@@ -2158,7 +3364,12 @@ input[type="radio"] {
   .form__actions,
   .btn,
   .quickrow,
-  .inlinevalue__input {
+  .inlinevalue__input,
+  /* The two pickers are controls with nothing to read: a grid of swatches and
+     a grid of emoji print as a page of confetti. The colour and the icon they
+     chose are already beside the name they belong to. */
+  .swatch,
+  .emojis {
     display: none;
   }
 
@@ -2178,13 +3389,32 @@ input[type="radio"] {
     padding: 0 0 var(--s1);
   }
 
-  .hero {
+  /* Every raised surface flattens: white ground, no shadow (the tokens above
+     already carry both), and no corner, because a rounded box printed in
+     silver reads as a form field waiting to be filled in. */
+  .hero,
+  .card,
+  .networth,
+  .invsum,
+  .meter,
+  .notice,
+  .empty,
+  .account,
+  .holding,
+  .preview {
     background: none;
+    border-radius: 0;
   }
 
   .ledger-row:hover,
   .ledger-row.is-active {
     background: none;
+  }
+
+  /* The tone bar down a budget card's edge is the one mark whose meaning is
+     purely its colour, so on paper it goes and the card keeps its outline. */
+  .meter::before {
+    display: none;
   }
 
   /* The numbers under every chart open on paper. */
@@ -2202,11 +3432,19 @@ input[type="radio"] {
     contain-intrinsic-size: auto;
   }
 
-  /* A row, a scale and a strip are never cut in half. */
+  /* A row, a scale, a card and a strip are never cut in half. .expandrow is in
+     the list because it is the whole of a row an app reader opened — the
+     summary and the panel under it — and only the wrapper knows that. */
   .ledger-row,
   .meter,
   .hero,
   .notice,
+  .card,
+  .networth,
+  .invsum,
+  .account,
+  .expandrow,
+  .holding,
   .table tr {
     break-inside: avoid;
   }

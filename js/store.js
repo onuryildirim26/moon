@@ -24,9 +24,18 @@
   /* Written only by wipe(), read only by other tabs. See wipe(). */
   var WIPE_KEY = "moon.v1.wiped";
   var CORRUPT_PREFIX = "moon.v1.corrupt.";
-  var SCHEMA_VERSION = 1;
+  var SCHEMA_VERSION = 2;
   var WRITE_DELAY = 250;
   var NOTE_MAX = 200;
+  var ACCOUNT_NAME_MAX = 60;
+  var INVESTMENT_NAME_MAX = 80;
+  /* One emoji is at most two surrogate pairs, which is what a flag or a keycap
+     costs; anything longer is a label, and a label belongs in `name`. */
+  var ICON_MAX = 4;
+  /* A price a day for a year and a bit. The chart reads this list and the whole
+     document goes into one localStorage string, so an unbounded history would
+     let a single holding crowd out the ledger. */
+  var HISTORY_MAX = 400;
 
   /* Error keys are i18n keys, not sentences: the view decides the wording. */
   var ERR = {
@@ -247,20 +256,63 @@
 
   /* ------------------------------------------------------------- defaults */
 
+  /* Ten colours in one luminance band, so a list of them reads as a set rather
+     than as a pile of stickers. The stylesheet exposes the same ten as
+     --cat-1 … --cat-10; a record stores the hex itself because the colour
+     travels in an export and has to mean the same thing in the next version. */
+  var CATEGORY_SPECTRUM = [
+    "#8AA6FF", "#3DD6A0", "#FF6F91", "#FFB454", "#B388FF",
+    "#45C8E8", "#9BDE4F", "#FF8A5B", "#FF6FD8", "#7E8CB0"
+  ];
+
+  /* What a record gets when it arrives with no icon of its own. A bullet is the
+     last resort: an empty icon would collapse the row's first column and shift
+     every name in the list by a few pixels. */
+  var FALLBACK_ICON = "•";
+  var ICON_BY_KIND = { income: "💰", expense: "🧾" };
+  var ICON_BY_ACCOUNT_KIND = { cash: "👛", bank: "🏦", card: "💳", savings: "🐖" };
+  var ICON_BY_INVESTMENT_KIND = {
+    stock: "📈",
+    fund: "📊",
+    crypto: "🪙",
+    gold: "🥇",
+    fx: "💱",
+    property: "🏠",
+    other: "📦"
+  };
+
+  var ACCOUNT_KINDS = ["cash", "bank", "card", "savings"];
+  var INVESTMENT_KINDS = ["stock", "fund", "crypto", "gold", "fx", "property", "other"];
+
+  function lookupOf(list) {
+    var map = {};
+    list.forEach(function (name) {
+      map[name] = 1;
+    });
+    return map;
+  }
+
+  var ACCOUNT_KIND_SET = lookupOf(ACCOUNT_KINDS);
+  var INVESTMENT_KIND_SET = lookupOf(INVESTMENT_KINDS);
+
+  /* Colours are dealt down this list in order, so a fresh install and a
+     migrated one look the same; the icons are chosen per category because a
+     reader recognises their own spending by its picture faster than by its
+     name, and only the migration has to fall back to ICON_BY_KIND. */
   var SEED_CATEGORIES = [
-    { key: "cat.rent", kind: "expense", fixed: true },
-    { key: "cat.bills", kind: "expense", fixed: true },
-    { key: "cat.subscriptions", kind: "expense", fixed: true },
-    { key: "cat.groceries", kind: "expense", fixed: false },
-    { key: "cat.eatingOut", kind: "expense", fixed: false },
-    { key: "cat.transport", kind: "expense", fixed: false },
-    { key: "cat.health", kind: "expense", fixed: false },
-    { key: "cat.home", kind: "expense", fixed: false },
-    { key: "cat.clothing", kind: "expense", fixed: false },
-    { key: "cat.fun", kind: "expense", fixed: false },
-    { key: "cat.other", kind: "expense", fixed: false },
-    { key: "cat.salary", kind: "income", fixed: false },
-    { key: "cat.otherIncome", kind: "income", fixed: false }
+    { key: "cat.rent", kind: "expense", fixed: true, color: CATEGORY_SPECTRUM[0], icon: "🏠" },
+    { key: "cat.bills", kind: "expense", fixed: true, color: CATEGORY_SPECTRUM[1], icon: "💡" },
+    { key: "cat.subscriptions", kind: "expense", fixed: true, color: CATEGORY_SPECTRUM[2], icon: "🔁" },
+    { key: "cat.groceries", kind: "expense", fixed: false, color: CATEGORY_SPECTRUM[3], icon: "🛒" },
+    { key: "cat.eatingOut", kind: "expense", fixed: false, color: CATEGORY_SPECTRUM[4], icon: "🍔" },
+    { key: "cat.transport", kind: "expense", fixed: false, color: CATEGORY_SPECTRUM[5], icon: "🚌" },
+    { key: "cat.health", kind: "expense", fixed: false, color: CATEGORY_SPECTRUM[6], icon: "🩺" },
+    { key: "cat.home", kind: "expense", fixed: false, color: CATEGORY_SPECTRUM[7], icon: "🪴" },
+    { key: "cat.clothing", kind: "expense", fixed: false, color: CATEGORY_SPECTRUM[8], icon: "👕" },
+    { key: "cat.fun", kind: "expense", fixed: false, color: CATEGORY_SPECTRUM[9], icon: "🎬" },
+    { key: "cat.other", kind: "expense", fixed: false, color: CATEGORY_SPECTRUM[0], icon: "🧾" },
+    { key: "cat.salary", kind: "income", fixed: false, color: CATEGORY_SPECTRUM[1], icon: "💰" },
+    { key: "cat.otherIncome", kind: "income", fixed: false, color: CATEGORY_SPECTRUM[2], icon: "📥" }
   ];
 
   /* "prism" is the third surface. A theme this list does not know is quietly
@@ -295,14 +347,18 @@
           name: translate(seed.key, chosen),
           kind: seed.kind,
           fixed: seed.fixed,
-          archived: false
+          archived: false,
+          color: seed.color,
+          icon: seed.icon
         };
       }),
       entries: [],
       limits: [],
       recurring: [],
       goals: [],
-      debts: []
+      debts: [],
+      accounts: [],
+      investments: []
     };
   }
 
@@ -311,6 +367,70 @@
   /* Every fill* returns a normalized record, or null when the record has no
      recoverable identity (no date, no amount). Missing optional fields are
      completed; unknown fields are copied through untouched. */
+
+  /* A tone is stored as six hex digits and reaches the page as an inline
+     --tone, so a named colour or a shorthand would arrive at CSS unchecked.
+     The case is normalized because a colour the reader picked in one session
+     has to compare equal to the same swatch in the next one. */
+  function toneOf(value) {
+    if (typeof value !== "string") return null;
+    var text = value.trim();
+    return /^#[0-9A-Fa-f]{6}$/.test(text) ? "#" + text.slice(1).toUpperCase() : null;
+  }
+
+  /* A record that arrives with no colour still has to have one, because the
+     view may not invent appearance the export does not carry. The id is the
+     only stable thing to deal from: a cursor would hand the same record a
+     different colour on every import. */
+  function toneFor(seed) {
+    var text = String(seed === null || seed === undefined ? "" : seed);
+    var sum = 0;
+    for (var i = 0; i < text.length; i += 1) {
+      sum = (sum * 31 + text.charCodeAt(i)) % 100003;
+    }
+    return CATEGORY_SPECTRUM[sum % CATEGORY_SPECTRUM.length];
+  }
+
+  /* An over-long icon is cut to its first code point rather than to ICON_MAX
+     code units: half of a surrogate pair renders as a replacement box, which
+     looks like a bug in Moon rather than like a long string in the file. */
+  function iconOf(value) {
+    if (typeof value !== "string") return null;
+    var text = value.trim();
+    if (text === "") return null;
+    if (text.length <= ICON_MAX) return text;
+    return String.fromCodePoint(text.codePointAt(0));
+  }
+
+  /* Display only: no part of Moon converts between currencies, so any ISO-ish
+     code is kept as written rather than forced into a list the reader's bank
+     may not be in. */
+  function currencyOf(value) {
+    if (typeof value === "string" && /^[A-Za-z]{3}$/.test(value)) return value.toUpperCase();
+    return "TRY";
+  }
+
+  /* A record that arrives with no name still has to be findable in a list,
+     because that name is the reader's cue to go and fix it. translate() hands
+     back the key itself when no catalogue knows it, and a raw key on screen
+     reads as a broken app, so common.unclassified — which has shipped since
+     v1 — stands in until the catalogue carries the specific one. */
+  function untitled(key, lang) {
+    var text = translate(key, lang);
+    return text === key ? translate("common.unclassified", lang) : text;
+  }
+
+  /* A quantity or a unit price cannot be negative — a holding of minus two
+     shares is a sign error in the file, not a position Moon models — so the
+     magnitude is what survives. toMinor also squares up a float or a digit
+     string, and that is a change to the file the reader has to be told about,
+     hence the report even when a number comes back. */
+  function nonNegativeMinor(value, report) {
+    var minor = toMinor(value);
+    if (minor === null) return null;
+    if (minor < 0 || !isInt(value)) report.repaired += 1;
+    return Math.abs(minor);
+  }
 
   function fillCategory(record, lang, report) {
     if (!isObject(record)) return null;
@@ -325,6 +445,14 @@
     out.kind = record.kind === "income" ? "income" : "expense";
     out.fixed = record.fixed === true;
     out.archived = record.archived === true;
+    var tone = toneOf(record.color);
+    var icon = iconOf(record.icon);
+    /* §3.4: both are required after the v2 migration, so a record without them
+       was hand-edited or written by something that is not Moon. Filling them in
+       is a change to the file, and the report is how the reader hears about it. */
+    if (tone === null || icon === null) report.repaired += 1;
+    out.color = tone === null ? toneFor(out.id) : tone;
+    out.icon = icon === null ? (ICON_BY_KIND[out.kind] || FALLBACK_ICON) : icon;
     return out;
   }
 
@@ -342,6 +470,10 @@
     out.amount = Math.abs(minor);
     out.direction = record.direction === "in" ? "in" : "out";
     out.categoryId = str(record.categoryId);
+    /* §3.2: the account an entry was paid from is extra information, never a
+       requirement. Every entry typed before accounts existed reads as null and
+       still counts in every total it counted in before. */
+    out.accountId = str(record.accountId);
     out.note = typeof record.note === "string" ? record.note.slice(0, NOTE_MAX) : "";
     out.fixed = record.fixed === true;
     out.source = SOURCES[record.source] ? record.source : "manual";
@@ -446,14 +578,180 @@
     return out;
   }
 
-  /* Field order here is the export order, and the export is read by humans. */
+  /* An account carries no measurement of its own beyond an opening balance, so
+     there is nothing in it that can be unreadable enough to justify dropping
+     the record: a hand-edited account comes back repaired, with a name the
+     reader can recognise and correct. */
+  function fillAccount(record, lang, report) {
+    if (!isObject(record)) return null;
+    var out = copyRecord(record);
+    out.id = str(record.id) || newId("a");
+
+    var name = str(record.name);
+    if (name === null) {
+      out.name = untitled("accounts.untitled", lang);
+      report.repaired += 1;
+    } else {
+      out.name = name.slice(0, ACCOUNT_NAME_MAX);
+      if (out.name !== name) report.repaired += 1;
+    }
+
+    out.kind = ACCOUNT_KIND_SET[record.kind] ? record.kind : "cash";
+    /* A card starts the month owing money, so the sign is kept exactly as
+       written; zero is the honest reading of an account that never said. */
+    var opening = toMinor(record.opening);
+    if (opening === null) {
+      if (record.opening !== undefined) report.repaired += 1;
+      opening = 0;
+    }
+    out.opening = opening;
+    out.currency = currencyOf(record.currency);
+
+    var tone = toneOf(record.color);
+    var icon = iconOf(record.icon);
+    if (tone === null || icon === null) report.repaired += 1;
+    out.color = tone === null ? toneFor(out.id) : tone;
+    out.icon = icon === null ? (ICON_BY_ACCOUNT_KIND[out.kind] || FALLBACK_ICON) : icon;
+
+    out.archived = record.archived === true;
+    out.createdAt = civil(record.createdAt, today());
+    return out;
+  }
+
+  /* One row of a holding's price history. A row without a date or without a
+     price says nothing about what the holding was worth, so it is the one part
+     of an investment that can be dropped. */
+  function fillPricePoint(record, report) {
+    if (!isObject(record)) return null;
+    var date = civil(record.date);
+    if (date === null) return null;
+    var price = nonNegativeMinor(record.unitPrice, report);
+    if (price === null) return null;
+    var out = copyRecord(record);
+    out.date = date;
+    out.unitPrice = price;
+    return out;
+  }
+
+  function fillInvestment(record, lang, report) {
+    if (!isObject(record)) return null;
+    var out = copyRecord(record);
+    out.id = str(record.id) || newId("i");
+
+    var name = str(record.name);
+    if (name === null) {
+      out.name = untitled("investments.untitled", lang);
+      report.repaired += 1;
+    } else {
+      out.name = name.slice(0, INVESTMENT_NAME_MAX);
+      if (out.name !== name) report.repaired += 1;
+    }
+
+    out.kind = INVESTMENT_KIND_SET[record.kind] ? record.kind : "other";
+
+    /* §3.3: quantity is an integer with four implied decimals, so half a coin
+       is 5000 and never 0.5. A fractional quantity in the file is therefore a
+       quantity written in the wrong unit, and there is no way to tell whether
+       the writer meant 0.5 units or 0.00005 — it is squared up to the nearest
+       stored unit and reported, never multiplied by ten thousand on a hunch. */
+    var quantity = nonNegativeMinor(record.quantity, report);
+    if (quantity === null) {
+      quantity = 0;
+      report.repaired += 1;
+    }
+    out.quantity = quantity;
+
+    var unitCost = nonNegativeMinor(record.unitCost, report);
+    if (unitCost === null) {
+      unitCost = 0;
+      report.repaired += 1;
+    }
+    out.unitCost = unitCost;
+
+    /* History is what the value-over-time chart reads, so it has to arrive in
+       the order that chart walks it and hold one price per day. Two rows for
+       one date are an edit the writer meant as a replacement, and the row they
+       left behind is the later one. */
+    var points = [];
+    var seenDates = {};
+    if (Array.isArray(record.history)) {
+      record.history.forEach(function (one) {
+        var point = fillPricePoint(one, report);
+        if (point === null) {
+          report.dropped += 1;
+          return;
+        }
+        if (Object.prototype.hasOwnProperty.call(seenDates, point.date)) {
+          points[seenDates[point.date]] = point;
+          report.repaired += 1;
+          return;
+        }
+        seenDates[point.date] = points.length;
+        points.push(point);
+      });
+    } else if (record.history !== undefined) {
+      report.repaired += 1;
+    }
+    points.sort(function (a, b) {
+      return a.date < b.date ? -1 : (a.date > b.date ? 1 : 0);
+    });
+    if (points.length > HISTORY_MAX) {
+      /* Trimming costs the reader prices they once typed, so it is counted as
+         loss and not as a repair: the caller copies the file aside before the
+         trimmed version takes its place. The newest rows are the ones the
+         chart and the current value are computed from. */
+      report.dropped += points.length - HISTORY_MAX;
+      points = points.slice(points.length - HISTORY_MAX);
+    }
+    out.history = points;
+    var newest = points.length > 0 ? points[points.length - 1] : null;
+
+    /* A holding with no readable price is still worth what it cost, and the
+       history knows better than the cost does. Neither is a guess: both are
+       numbers the reader typed at a date the file records. */
+    var price = nonNegativeMinor(record.unitPrice, report);
+    if (price === null) {
+      price = newest === null ? unitCost : newest.unitPrice;
+      report.repaired += 1;
+    }
+    out.unitPrice = price;
+
+    out.currency = currencyOf(record.currency);
+    out.note = typeof record.note === "string" ? record.note.slice(0, NOTE_MAX) : "";
+
+    var tone = toneOf(record.color);
+    var icon = iconOf(record.icon);
+    if (tone === null || icon === null) report.repaired += 1;
+    out.color = tone === null ? toneFor(out.id) : tone;
+    out.icon = icon === null ? (ICON_BY_INVESTMENT_KIND[out.kind] || FALLBACK_ICON) : icon;
+
+    out.archived = record.archived === true;
+    out.createdAt = civil(record.createdAt, today());
+    /* The price is at least as old as the record, so the day the record was
+       created is the honest fallback — today would claim the reader checked a
+       price they have not looked at in months. */
+    var priceDate = civil(record.priceDate);
+    if (priceDate === null) {
+      if (record.priceDate !== undefined) report.repaired += 1;
+      priceDate = newest === null ? out.createdAt : newest.date;
+    }
+    out.priceDate = priceDate;
+    return out;
+  }
+
+  /* Field order here is the export order, and the export is read by humans.
+     accounts and investments come last because the six collections above them
+     are the ones a v1 backup already had, and a reader comparing an old export
+     with a new one should find the familiar part unmoved. */
   var COLLECTIONS = [
     { name: "categories", fill: fillCategory },
     { name: "entries", fill: fillEntry },
     { name: "limits", fill: fillLimit },
     { name: "recurring", fill: fillRecurring },
     { name: "goals", fill: fillGoal },
-    { name: "debts", fill: fillDebt }
+    { name: "debts", fill: fillDebt },
+    { name: "accounts", fill: fillAccount },
+    { name: "investments", fill: fillInvestment }
   ];
 
   var TOP_FIELDS = { schemaVersion: 1, createdAt: 1, settings: 1 };
@@ -554,11 +852,35 @@
 
   /* ------------------------------------------------------------ migrations */
 
-  /* MIGRATIONS[n] carries data from schemaVersion n to n+1. Version 1 is the
-     only shipped schema, so nothing runs yet; the skeleton exists so the first
-     real migration is a single entry and never a refactor. */
+  /* MIGRATIONS[n] carries data from schemaVersion n to n+1. Each step edits the
+     blob in place on purpose: a record rebuilt field by field would lose
+     whatever a newer Moon wrote into it, and this file promises those fields
+     survive a round trip. Every step must also be safe to run twice — the same
+     bytes can reach a second tab, or a second device over a synced folder, and
+     be migrated again there. */
   var MIGRATIONS = {
+    /* v2 adds the two collections the net-worth card sums, and dresses every
+       category in the colour and icon the redesigned lists draw. A collection
+       that is present but is not a list is left exactly as it is: normalize
+       counts that as loss and the caller copies the bytes aside, which is the
+       opposite of what replacing it with an empty list would do. */
     1: function (data) {
+      if (data.accounts === undefined) data.accounts = [];
+      if (data.investments === undefined) data.investments = [];
+      if (Array.isArray(data.categories)) {
+        data.categories.forEach(function (category, index) {
+          if (!isObject(category)) return;
+          /* Dealt by position, so the first ten categories are ten different
+             colours and the eleventh starts the spectrum again. A category
+             that already carries a colour keeps the one it was given. */
+          if (toneOf(category.color) === null) {
+            category.color = CATEGORY_SPECTRUM[index % CATEGORY_SPECTRUM.length];
+          }
+          if (iconOf(category.icon) === null) {
+            category.icon = ICON_BY_KIND[category.kind] || FALLBACK_ICON;
+          }
+        });
+      }
       data.schemaVersion = 2;
       return data;
     }
@@ -1140,7 +1462,12 @@
     });
 
     var remap = {};
-    var additions = { categories: [], entries: [], limits: [], recurring: [], goals: [], debts: [] };
+    /* Built from COLLECTIONS rather than written out, so a collection added to
+       the schema cannot reach this path without a list to be pushed into. */
+    var additions = {};
+    COLLECTIONS.forEach(function (spec) {
+      additions[spec.name] = [];
+    });
 
     incoming.categories.forEach(function (category) {
       var twin = byName[nameKey(category.name)];
@@ -1176,7 +1503,11 @@
       if (limit && limit.categoryId) limitedCategories[limit.categoryId] = true;
     });
 
-    ["entries", "limits", "recurring", "goals", "debts"].forEach(function (name) {
+    /* Categories are already in: they fold by name above, and everything else
+       has to be remapped onto the ids that fold produced. */
+    COLLECTIONS.forEach(function (spec) {
+      var name = spec.name;
+      if (name === "categories") return;
       incoming[name].forEach(function (record) {
         if (existingIds[name][record.id]) {
           counts.skipped += 1;
@@ -1311,6 +1642,22 @@
     CORRUPT_PREFIX: CORRUPT_PREFIX,
     SCHEMA_VERSION: SCHEMA_VERSION,
     MIGRATIONS: MIGRATIONS,
+    /* The shape constants travel with the store because the store is what
+       enforces them: a category editor offering an eleventh colour, or a model
+       validator allowing a 90-character account name, would be writing records
+       this file then quietly repairs. */
+    CATEGORY_SPECTRUM: CATEGORY_SPECTRUM,
+    ICON_BY_KIND: ICON_BY_KIND,
+    ICON_BY_ACCOUNT_KIND: ICON_BY_ACCOUNT_KIND,
+    ICON_BY_INVESTMENT_KIND: ICON_BY_INVESTMENT_KIND,
+    FALLBACK_ICON: FALLBACK_ICON,
+    ACCOUNT_KINDS: ACCOUNT_KINDS,
+    INVESTMENT_KINDS: INVESTMENT_KINDS,
+    ACCOUNT_NAME_MAX: ACCOUNT_NAME_MAX,
+    INVESTMENT_NAME_MAX: INVESTMENT_NAME_MAX,
+    NOTE_MAX: NOTE_MAX,
+    ICON_MAX: ICON_MAX,
+    HISTORY_MAX: HISTORY_MAX,
     status: status,
 
     boot: boot,
@@ -1452,6 +1799,12 @@
         assert(income.length === 2, "expected 2 income categories");
         assert(state.settings.monthStartDay === 1 && state.settings.overflowMark === "pigment", "settings defaults");
         assert(/^\d{4}-\d{2}-\d{2}$/.test(state.createdAt), "createdAt must be a civil date");
+        var dressed = state.categories.filter(function (c) {
+          return typeof c.color === "string" && c.color !== "" && typeof c.icon === "string" && c.icon !== "";
+        });
+        assert(dressed.length === 13, "every seed category needs a colour and an icon, got " + dressed.length);
+        assert(state.schemaVersion === SCHEMA_VERSION, "a fresh install is written at the current version");
+        assert(Array.isArray(state.accounts) && Array.isArray(state.investments), "both v2 collections exist");
         assert(stored(testStorage) !== null, "fresh install must be persisted");
       });
 
@@ -1593,6 +1946,152 @@
         assert(status.lastError && status.lastError.messageKey === ERR.unknownSchema, "lastError key");
       });
 
+      /* 8b — the v1 → v2 step on its own: dealt colours, both new collections,
+               nothing of the reader's lost, and the same answer twice. */
+      check("migrate: v1 to v2 is lossless and running it twice changes nothing", function () {
+        var v1 = {
+          schemaVersion: 1,
+          createdAt: "2026-09-01",
+          settings: { lang: "tr" },
+          categories: [
+            { id: "c_1", name: "Kira", kind: "expense", fixed: true, archived: false, futureField: "keep me" },
+            { id: "c_2", name: "Maas", kind: "income", fixed: false, archived: false },
+            { id: "c_3", name: "Market", kind: "expense", fixed: false, archived: false, color: "#123456" }
+          ],
+          entries: [{ id: "e_1", date: "2026-09-02", amount: 100, direction: "out", futureWing: 7 }],
+          limits: [], recurring: [], goals: [], debts: [],
+          futureTopLevel: { kept: true }
+        };
+        var once = MIGRATIONS[1](clone(v1));
+        assert(once.schemaVersion === 2, "schemaVersion should be 2, got " + once.schemaVersion);
+        assert(Array.isArray(once.accounts) && once.accounts.length === 0, "accounts must arrive empty");
+        assert(Array.isArray(once.investments) && once.investments.length === 0, "investments must arrive empty");
+        assert(once.categories[0].color === CATEGORY_SPECTRUM[0], "colours are dealt by position");
+        assert(once.categories[1].color === CATEGORY_SPECTRUM[1], "and keep going round the spectrum");
+        assert(once.categories[2].color === "#123456", "a colour already chosen must be left alone");
+        assert(once.categories[0].icon === ICON_BY_KIND.expense, "an expense gets the expense icon");
+        assert(once.categories[1].icon === ICON_BY_KIND.income, "and income gets the income one");
+        assert(once.categories[0].futureField === "keep me", "an unknown field on a record it rewrites");
+        assert(once.entries[0].futureWing === 7, "an unknown field on a record it does not touch");
+        assert(once.futureTopLevel.kept === true, "and an unknown top-level field");
+        var twice = MIGRATIONS[1](clone(once));
+        assert(JSON.stringify(twice) === JSON.stringify(once), "the second run must change nothing");
+
+        /* A collection that is there but is not a list is loss, and normalize
+           is where that is reported; replacing it here would hide it. */
+        var odd = MIGRATIONS[1]({ schemaVersion: 1, accounts: "not-a-list", categories: "not-a-list" });
+        assert(odd.accounts === "not-a-list", "a non-list collection must be left for normalize");
+        assert(odd.investments.length === 0, "and the missing one still added");
+      });
+
+      /* 8c — the same step through boot, and what it leaves on disk */
+      check("boot: v1 data migrates to v2 and is written back as v2", function () {
+        testStorage = makeShim({
+          "moon.v1": JSON.stringify({
+            schemaVersion: 1, createdAt: "2026-09-01", settings: { lang: "tr" },
+            categories: [{ id: "c_1", name: "Kira", kind: "expense", fixed: true, archived: false }],
+            entries: [{ id: "e_1", date: "2026-09-02", amount: 2500, direction: "out", categoryId: "c_1" }],
+            limits: [], recurring: [], goals: [], debts: []
+          })
+        });
+        var out = boot();
+        assert(out.reason === "migrated", "reason should be migrated, got " + out.reason);
+        assert(out.dropped === 0 && out.repaired === 0, "a clean v1 file needs no repair");
+        assert(state.schemaVersion === 2, "the live state must be v2");
+        assert(Array.isArray(state.accounts) && Array.isArray(state.investments), "both collections present");
+        assert(state.categories[0].color === CATEGORY_SPECTRUM[0], "the category is dressed");
+        assert(state.categories[0].icon === ICON_BY_KIND.expense, "icon as well");
+        assert(state.entries[0].accountId === null, "an entry with no account reads as null");
+        var onDisk = stored(testStorage);
+        /* The written file is what an older Moon would find: at version 2 it
+           refuses to overwrite it, which is the only thing stopping a v1 copy
+           of the app from writing these records back without the new fields. */
+        assert(onDisk.schemaVersion === 2, "v2 is what gets written, got " + onDisk.schemaVersion);
+        assert(Array.isArray(onDisk.accounts) && Array.isArray(onDisk.investments), "and it carries both lists");
+        assert(testStorage.raw["moon.v1.bak"], "a migrating boot snapshots the pre-migration file");
+      });
+
+      /* 8d — a hand-edited holding is repaired, never binned */
+      check("import: a malformed account and holding are repaired, not dropped", function () {
+        testStorage = makeShim();
+        boot();
+        var file = JSON.stringify({
+          schemaVersion: 2,
+          createdAt: "2026-09-01",
+          settings: { lang: "tr", currency: "TRY", monthStartDay: 1 },
+          categories: [], entries: [], limits: [], recurring: [], goals: [], debts: [],
+          accounts: [
+            { id: "a_1", name: "Garanti", kind: "bank", opening: 125000, currency: "try" },
+            { id: "a_2", kind: "wallet", opening: "about three fifty" }
+          ],
+          investments: [{
+            id: "i_1", name: "THYAO", kind: "shares",
+            quantity: -1000, unitCost: 24500, unitPrice: null, priceDate: "whenever",
+            note: "ilk alim", futureField: "keep me",
+            history: [
+              { date: "2026-09-04", unitPrice: 31200 },
+              { date: "2026-09-02", unitPrice: 24500 },
+              { date: "2026-09-04", unitPrice: 31500 },
+              { date: "the fourth", unitPrice: 1 }
+            ]
+          }]
+        });
+        var out = importJson(file, { mode: "replace" });
+        assert(out.ok === true, "the file must still import: " + out.error);
+        assert(out.counts.accounts === 2, "both accounts arrive, got " + out.counts.accounts);
+        assert(out.counts.investments === 1, "and the holding, got " + out.counts.investments);
+        assert(out.counts.repaired > 0, "with the repairs reported");
+        assert(out.counts.dropped === 1, "only the undated price row is lost, got " + out.counts.dropped);
+
+        var holding = state.investments[0];
+        assert(holding.quantity === 1000, "a negative quantity keeps its magnitude");
+        assert(holding.kind === "other", "an unknown kind falls back to other");
+        assert(holding.history.length === 2, "one date cannot hold two prices");
+        assert(holding.history[0].date === "2026-09-02", "history is oldest first");
+        assert(holding.history[1].unitPrice === 31500, "and the later row for a date wins");
+        assert(holding.unitPrice === 31500, "a missing price is read off the history");
+        assert(holding.priceDate === "2026-09-04", "and so is the day it was typed");
+        assert(holding.futureField === "keep me", "unknown fields survive a holding too");
+        assert(holding.icon === ICON_BY_INVESTMENT_KIND.other && !!holding.color, "and it comes out dressed");
+
+        var account = state.accounts[1];
+        assert(account.kind === "cash" && account.opening === 0, "an unreadable account is repaired");
+        assert(!!account.name && !!account.icon && !!account.color, "and comes out nameable and dressed");
+        assert(state.accounts[0].currency === "TRY", "a currency is stored uppercase");
+        assert(state.accounts[0].opening === 125000, "a readable opening balance is left alone");
+      });
+
+      /* 8e — the two numbers a holding cannot be trusted to carry itself */
+      check("fillInvestment: history is capped newest-first-out, quantity stays integer", function () {
+        var report = { repaired: 0, dropped: 0, structural: 0 };
+        var rows = [];
+        for (var i = 0; i < HISTORY_MAX + 20; i += 1) {
+          /* Built from a local Date so the dates are civil strings; a UTC slice
+             would shift the first row into the previous year. */
+          var day = new Date(2025, 0, 1 + i);
+          rows.push({
+            date: day.getFullYear() + "-" + pad2(day.getMonth() + 1) + "-" + pad2(day.getDate()),
+            unitPrice: 1000 + i
+          });
+        }
+        var capped = fillInvestment({
+          id: "i_cap", name: "Fon", kind: "fund", quantity: 10000,
+          unitCost: 1000, unitPrice: 1000 + rows.length - 1, history: rows
+        }, "tr", report);
+        assert(capped.history.length === HISTORY_MAX, "capped at " + HISTORY_MAX + ", got " + capped.history.length);
+        assert(capped.history[0].unitPrice === 1020, "the oldest rows are the ones that go");
+        assert(capped.history[HISTORY_MAX - 1].unitPrice === 1000 + rows.length - 1, "the newest row stays");
+        assert(report.dropped === 20, "the trimmed rows are reported as lost, got " + report.dropped);
+
+        var second = { repaired: 0, dropped: 0, structural: 0 };
+        var half = fillInvestment({
+          id: "i_half", name: "BTC", kind: "crypto", quantity: 0.5, unitCost: 1, unitPrice: 1
+        }, "tr", second);
+        assert(isInt(half.quantity), "a fractional quantity must come out an integer");
+        assert(second.repaired > 0, "and be reported: half a stored unit is not half a coin");
+        assert(half.history.length === 0, "an empty history is left empty, not invented");
+      });
+
       /* 9 — quota */
       check("quota: the change stays in memory and the app shouts", function () {
         testStorage = makeShim();
@@ -1616,12 +2115,18 @@
       /* 10 — session backup taken once, before the first write */
       check("backup: one snapshot per session, taken before the first write", function () {
         /* Boot on existing data: that is the state worth snapshotting. A fresh
-           install has nothing to preserve, so no snapshot is taken there. */
+           install has nothing to preserve, so no snapshot is taken there. The
+           data is current-schema on purpose — a migrating boot takes its own
+           forced snapshot before touching anything, which is a different
+           promise, checked where the migration is checked. */
         testStorage = makeShim({
           "moon.v1": JSON.stringify({
-            schemaVersion: 1, createdAt: "2026-09-01", settings: { lang: "tr" },
-            categories: [{ id: "c_1", name: "Market", kind: "expense", fixed: false, archived: false }],
-            entries: [], limits: [], recurring: [], goals: [], debts: []
+            schemaVersion: SCHEMA_VERSION, createdAt: "2026-09-01", settings: { lang: "tr" },
+            categories: [{
+              id: "c_1", name: "Market", kind: "expense", fixed: false, archived: false,
+              color: CATEGORY_SPECTRUM[0], icon: ICON_BY_KIND.expense
+            }],
+            entries: [], limits: [], recurring: [], goals: [], debts: [], accounts: [], investments: []
           })
         });
         boot();
@@ -1820,11 +2325,13 @@
         assert(usage().keys.length === 1, "only the live key is left, got " + usage().keys.length);
       });
 
-      /* 16 — storage refused entirely */
+      /* 16 — storage refused entirely. Current-schema data, so what is under
+              test is the blocked storage and not what boot calls a session that
+              had to migrate on the way in as well. */
       check("boot: blocked storage degrades to a memory session", function () {
         var shim = makeShim({
           "moon.v1": JSON.stringify({
-            schemaVersion: 1, settings: { lang: "tr" }, categories: [],
+            schemaVersion: SCHEMA_VERSION, settings: { lang: "tr" }, categories: [],
             entries: [{ id: "e_ro", date: "2026-09-19", amount: 4242, direction: "out" }]
           })
         });

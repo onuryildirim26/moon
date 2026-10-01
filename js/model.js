@@ -54,6 +54,8 @@
   var RECURRING_MAX_ROWS = 20;
   var RECURRING_LOOKBACK = 12;          /* periods scanned, ending with the current one */
 
+  var SERIES_MONTHS = 12;               /* default window of the holdings chart */
+
   /* ----------------------------------------------------------- primitives */
 
   var DATE_RE = /^(\d{4})-(\d{2})-(\d{2})$/;
@@ -1083,6 +1085,355 @@
     return out;
   }
 
+  /* ------------------------------------------------ accounts and holdings
+
+     The shape constants — the kind lists, the icon tables, the length ceilings,
+     the colour spectrum — are read from Moon.Store rather than copied into this
+     file, because the store is what enforces them when a file is read back: a
+     validator that agreed with a second copy kept here would pass while writing
+     records store.js then quietly repairs. They are read past the fixture
+     indirection on purpose, since they describe the file format and not the
+     data _selftest() stands in for. Every fallback below is unreachable on a
+     loaded page — store.js is a load-order dependency of this file, and without
+     it write() already refuses every mutator — and exists only so a read cannot
+     throw on a page assembled in the wrong order. */
+
+  function storeShape(name) {
+    var s = Moon.Store;
+    var value = s ? s[name] : null;
+    return value === undefined ? null : value;
+  }
+
+  function storeCap(name, fallback) {
+    var n = int(storeShape(name));
+    return n > 0 ? n : fallback;
+  }
+
+  /* A kind Moon does not list is not a kind: it is a typo, or a column from
+     another app's export. Storing it would park the record in a bucket no
+     picker offers and no total names, so the default stands in for it. */
+  function kindOf(value, listName, fallback) {
+    var kinds = storeShape(listName);
+    if (!Array.isArray(kinds) || kinds.indexOf(value) === -1) return fallback;
+    return value;
+  }
+
+  /* §3.4 makes colour and icon part of the record, so they are stored when the
+     record is written rather than invented at render time — a view falling back
+     to a default would show one thing while the export carried another. */
+  function toneOf(value) {
+    var code = text(value).trim();
+    return /^#[0-9A-Fa-f]{6}$/.test(code) ? "#" + code.slice(1).toUpperCase() : null;
+  }
+
+  /* Dealt by position, the same round-robin the v2 migration uses on
+     categories: a reader who adds four accounts in a row gets four different
+     colours without having to pick any of them. */
+  function spectrumAt(index) {
+    var spectrum = storeShape("CATEGORY_SPECTRUM");
+    if (!Array.isArray(spectrum) || !spectrum.length) return null;
+    var slot = int(index) % spectrum.length;
+    return spectrum[slot < 0 ? slot + spectrum.length : slot];
+  }
+
+  /* An over-long icon is cut to its first code point rather than to a count of
+     code units, because half of a surrogate pair renders as a replacement box
+     and that reads as a bug in Moon rather than as a long string in the file.
+     store.js applies the same rule when it reads a record back. */
+  function iconOf(value) {
+    var icon = text(value).trim();
+    if (!icon) return null;
+    if (icon.length <= storeCap("ICON_MAX", 4)) return icon;
+    return String.fromCodePoint(icon.codePointAt(0));
+  }
+
+  function iconFor(tableName, kind) {
+    var table = storeShape(tableName);
+    var icon = table ? table[kind] : null;
+    return icon || storeShape("FALLBACK_ICON") || "•";
+  }
+
+  /* Display only: nothing in Moon converts between currencies, so a code is
+     kept as the reader wrote it, upper-cased so two spellings cannot read as
+     two currencies. The reader's own setting stands in when a record says
+     nothing, because that is the currency the rest of the screen is in. */
+  function currencyOf(value) {
+    var code = text(value).trim();
+    if (/^[A-Za-z]{3}$/.test(code)) return code.toUpperCase();
+    var preferred = text(settings().currency).trim();
+    return /^[A-Za-z]{3}$/.test(preferred) ? preferred.toUpperCase() : "TRY";
+  }
+
+  function byDateAscending(a, b) {
+    var left = text(a && a.date);
+    var right = text(b && b.date);
+    return left < right ? -1 : (left > right ? 1 : 0);
+  }
+
+  /* §3.3's four implied decimal places. The scale lives in Moon.Money so the
+     parser, the formatter and this arithmetic can never disagree about where
+     the point sits. */
+  function quantityScale() {
+    var m = money();
+    var scale = m ? int(m.QUANTITY_SCALE) : 0;
+    return scale > 0 ? scale : 1;
+  }
+
+  /* A stored quantity, a unit cost and a unit price are all non-negative
+     integers in their own unit. A patch value that cannot be read as one says
+     nothing, and leaving the stored number alone is better than writing a zero
+     the reader never typed. */
+  function isCount(value) {
+    if (value === null || value === undefined || value === "") return false;
+    var n = Number(value);
+    return isFinite(n) && n >= 0;
+  }
+
+  /* An opening balance is the one amount in Moon allowed to be negative, so it
+     is checked for being readable rather than for being positive. */
+  function isSignedAmount(value) {
+    if (value === null || value === undefined || value === "") return false;
+    return isFinite(Number(value));
+  }
+
+  /* The account on an entry is stored as an id or as null, the same two shapes
+     store.js reads back, so a record the model writes and a record the store
+     repairs cannot differ. The id is not checked against the account list: an
+     entry whose account was deleted is detached by removeAccount, and an id an
+     importer carried from a file is the reader's to correct, not this file's to
+     throw away. */
+  function accountRef(value) {
+    var id = text(value).trim();
+    return id ? id : null;
+  }
+
+  function accounts(opts) {
+    var o = opts || {};
+    return list("accounts").filter(function (account) {
+      if (!account || !account.id) return false;
+      if (!o.all && account.archived) return false;
+      if (o.kind && account.kind !== o.kind) return false;
+      return true;
+    });
+  }
+
+  function accountById(id) {
+    if (!id) return null;
+    var all = list("accounts");
+    for (var i = 0; i < all.length; i += 1) {
+      if (all[i] && all[i].id === id) return all[i];
+    }
+    return null;
+  }
+
+  /* Net movement per account in one pass over the ledger. The accounts screen
+     asks for every balance at once, and a scan per account turns a long ledger
+     into a pause the reader can see. */
+  function accountMovements() {
+    var out = Object.create(null);
+    list("entries").forEach(function (e) {
+      if (!e || !e.accountId || !isDate(e.date)) return;
+      var amount = positiveInt(e.amount);
+      if (!amount) return;
+      var running = out[e.accountId] || 0;
+      out[e.accountId] = direction(e) === "in" ? running + amount : running - amount;
+    });
+    return out;
+  }
+
+  /* §3.2: opening plus what came in, minus what went out. The opening keeps its
+     sign — a card starts the month owing money — which makes an account balance
+     the one reading in Moon allowed to be negative without being an error. */
+  function accountBalance(id) {
+    var account = accountById(id);
+    if (!account) return 0;
+    return int(account.opening) + (accountMovements()[id] || 0);
+  }
+
+  function accountTotals() {
+    var movements = accountMovements();
+    var byKind = Object.create(null);
+    var out = { total: 0, byKind: byKind, count: 0 };
+    /* An archived account is one the reader closed and it is off the accounts
+       screen, so carrying it here would leave the total above the cards
+       disagreeing with the sum of the cards under it. */
+    accounts().forEach(function (account) {
+      var balance = int(account.opening) + (movements[account.id] || 0);
+      out.total += balance;
+      out.count += 1;
+      byKind[account.kind] = (byKind[account.kind] || 0) + balance;
+    });
+    return out;
+  }
+
+  /* §5.1's line under each card: what actually moved through the account this
+     period. The opening balance is deliberately absent — it is where the
+     account started, not something that moved. */
+  function accountFlow(id, periodKey) {
+    var flow = { in: 0, out: 0, count: 0 };
+    var key = periodKey || currentPeriodKey();
+    if (!id || !key) return flow;
+    entries({ period: key }).forEach(function (e) {
+      if (!e || e.accountId !== id) return;
+      var amount = positiveInt(e.amount);
+      if (!amount) return;
+      flow.count += 1;
+      if (direction(e) === "in") flow.in += amount;
+      else flow.out += amount;
+    });
+    return flow;
+  }
+
+  function investments(opts) {
+    var o = opts || {};
+    return list("investments").filter(function (record) {
+      if (!record || !record.id) return false;
+      if (!o.all && record.archived) return false;
+      if (o.kind && record.kind !== o.kind) return false;
+      return true;
+    });
+  }
+
+  function investmentById(id) {
+    if (!id) return null;
+    var all = list("investments");
+    for (var i = 0; i < all.length; i += 1) {
+      if (all[i] && all[i].id === id) return all[i];
+    }
+    return null;
+  }
+
+  /* §3.3: quantity carries four implied decimals, so dividing by the scale is
+     what turns a stored 5000 back into half a unit. Each of the two products is
+     rounded exactly once and the gain is the difference between those two
+     integers, never a third rounding — otherwise half a kuruş of rounding
+     error surfaces as a gain the reader never made. */
+  function investmentValue(record) {
+    var scale = quantityScale();
+    var quantity = positiveInt(record && record.quantity);
+    var value = Math.round(quantity * positiveInt(record && record.unitPrice) / scale);
+    var cost = Math.round(quantity * positiveInt(record && record.unitCost) / scale);
+    var gain = value - cost;
+    /* A gain measured against nothing has no percentage: a holding entered
+       without a cost is not up by infinity, it is simply uncosted. */
+    return {
+      value: value,
+      cost: cost,
+      gain: gain,
+      gainRatio: cost > 0 ? pct(gain, cost) : null
+    };
+  }
+
+  function investmentTotals() {
+    var byKind = Object.create(null);
+    var out = { value: 0, cost: 0, gain: 0, gainRatio: null, byKind: byKind, kinds: [], count: 0 };
+    investments().forEach(function (record) {
+      var reading = investmentValue(record);
+      out.value += reading.value;
+      out.cost += reading.cost;
+      out.count += 1;
+      var group = byKind[record.kind];
+      if (!group) {
+        group = { kind: record.kind, value: 0, cost: 0, gain: 0, share: null, count: 0 };
+        byKind[record.kind] = group;
+        out.kinds.push(group);
+      }
+      group.value += reading.value;
+      group.cost += reading.cost;
+      group.gain += reading.gain;
+      group.count += 1;
+    });
+    out.gain = out.value - out.cost;
+    if (out.cost > 0) out.gainRatio = pct(out.gain, out.cost);
+    /* §5.2 draws the breakdown as a stacked bar, read widest segment first. The
+       share is handed over already computed so the bar and the legend under it
+       cannot round the same number two different ways. */
+    out.kinds.forEach(function (group) { group.share = pct(group.value, out.value); });
+    out.kinds = util.sortBy(out.kinds, function (group) { return group.value; }, true);
+    return out;
+  }
+
+  /* The value-over-time chart: one point per date some holding carries a price
+     for, oldest first, each point worth what every holding was worth that day
+     at the newest price typed on or before it. A holding with no price yet
+     counts as nothing rather than as its cost, because the chart is a record of
+     what the reader measured and before the first price there is no
+     measurement. A holding priced only before the window therefore keeps its
+     last price across every point inside it. */
+  function investmentSeries(months) {
+    var holdings = investments();
+    if (!holdings.length) return [];
+
+    var scale = quantityScale();
+    var asked = int(months);
+    var monthsBack = asked > 0 ? asked : SERIES_MONTHS;
+    var cutoff = null;
+    var d = dates();
+    var current = currentPeriodKey();
+    if (d && d.shiftPeriod && current) {
+      var range = periodRange(d.shiftPeriod(current, -(monthsBack - 1)));
+      if (range) cutoff = range.start;
+    }
+
+    /* Sorted locally because the walk below reads each history front to back
+       and only store.js guarantees the order of a file it has read. */
+    var histories = holdings.map(function (record) {
+      return (Array.isArray(record.history) ? record.history : [])
+        .filter(function (point) { return point && isDate(point.date); })
+        .sort(byDateAscending);
+    });
+
+    var seen = Object.create(null);
+    histories.forEach(function (rows) {
+      rows.forEach(function (point) { seen[point.date] = true; });
+    });
+    var days = Object.keys(seen).sort();
+
+    var cursors = holdings.map(function () { return 0; });
+    var prices = holdings.map(function () { return null; });
+    var out = [];
+    days.forEach(function (date) {
+      var total = 0;
+      for (var i = 0; i < holdings.length; i += 1) {
+        var rows = histories[i];
+        while (cursors[i] < rows.length && rows[cursors[i]].date <= date) {
+          prices[i] = positiveInt(rows[cursors[i]].unitPrice);
+          cursors[i] += 1;
+        }
+        if (prices[i] === null) continue;
+        total += Math.round(positiveInt(holdings[i].quantity) * prices[i] / scale);
+      }
+      if (cutoff === null || date >= cutoff) out.push({ date: date, value: total });
+    });
+    return out;
+  }
+
+  /* §4: zeros rather than a throw on an empty collection, and never a figure
+     nobody measured. `measured` is how the view tells a net worth of zero apart
+     from a net worth nobody has written down yet — the second case is owed a
+     sentence, not a printed ₺0,00. */
+  function netWorth() {
+    var cash = accountTotals();
+    var holdings = investmentTotals();
+    var debts = debtTotals();
+    var cashTotal = int(cash.total);
+    var investedTotal = int(holdings.value);
+    var owedToMe = positiveInt(debts.owedToMe);
+    var iOwe = positiveInt(debts.iOwe);
+    var assets = cashTotal + investedTotal + owedToMe;
+    return {
+      cash: cashTotal,
+      investments: investedTotal,
+      owedToMe: owedToMe,
+      iOwe: iOwe,
+      assets: assets,
+      liabilities: iOwe,
+      total: assets - iOwe,
+      measured: cash.count > 0 || holdings.count > 0 || debts.openCount > 0,
+      counts: { accounts: cash.count, investments: holdings.count, debts: debts.openCount }
+    };
+  }
+
   function duplicateKey(entry) {
     if (!entry) return "";
     return text(entry.date) + "|" + positiveInt(entry.amount) + "|" + direction(entry) + "|"
@@ -1209,6 +1560,63 @@
     return result(errors);
   }
 
+  /* A name longer than the ceiling is not a refusal. The add row carries a
+     maxlength, so a long name was pasted rather than typed, and cutting it to
+     the stored length is exactly what store.js does when it reads the same
+     record back — refusing the save would leave the reader with an error they
+     cannot see the cause of. The empty name is the real refusal: a nameless
+     account cannot be told from another nameless account. */
+  function validateAccount(draft) {
+    var errors = {};
+    var d = draft || {};
+
+    if (!text(d.name).trim()) errors.name = "err.nameRequired";
+
+    /* An omitted opening balance is zero rather than an error: most accounts
+       are added mid-month with whatever is in them today, and the reader who
+       does not know the figure should not be stopped by it. */
+    var stated = d.opening !== null && d.opening !== undefined && d.opening !== "";
+    if (stated && !isSignedAmount(d.opening)) errors.opening = "err.badAmount";
+
+    return result(errors);
+  }
+
+  function validateInvestment(draft) {
+    var errors = {};
+    var d = draft || {};
+
+    if (!text(d.name).trim()) errors.name = "err.nameRequired";
+
+    /* The view hands over a quantity Moon.Money.parseQuantity has already
+       turned into four implied decimals, so a fraction arriving here is a
+       caller that skipped the parser rather than a reader who typed badly.
+       Zero is accepted: a holding the reader has sold but still wants to watch
+       the price of is a position of nothing, not a broken record. */
+    var quantity = Number(d.quantity);
+    if (d.quantity === null || d.quantity === undefined || d.quantity === "" ||
+        !isFinite(quantity) || quantity < 0 || Math.round(quantity) !== quantity) {
+      errors.quantity = "err.quantityInvalid";
+    }
+
+    /* Without a price there is nothing to measure, which is why this is the one
+       required number on a holding and the cost is not. */
+    if (d.unitPrice === null || d.unitPrice === undefined || d.unitPrice === "") {
+      errors.unitPrice = "err.priceRequired";
+    } else if (!isCount(d.unitPrice)) {
+      errors.unitPrice = "err.badAmount";
+    }
+
+    if (d.unitCost !== null && d.unitCost !== undefined && d.unitCost !== "" &&
+        !isCount(d.unitCost)) {
+      errors.unitCost = "err.badAmount";
+    }
+
+    if (text(d.note).length > storeCap("NOTE_MAX", 200)) errors.note = "err.noteTooLong";
+    if (text(d.priceDate) && !isDate(d.priceDate)) errors.priceDate = "err.dateInvalid";
+
+    return result(errors);
+  }
+
   /* ------------------------------------------------------------- writing */
 
   function write(reason, mutator, opts) {
@@ -1243,6 +1651,10 @@
       amount: positiveInt(draft.amount),
       direction: draft.direction === "in" ? "in" : "out",
       categoryId: draft.categoryId,
+      /* §3.2: the account is extra information, so a draft that says nothing
+         about one is written with null rather than refused, and the record
+         counts in every total it counted in before accounts existed. */
+      accountId: accountRef(draft.accountId),
       note: text(draft.note).slice(0, 200),
       fixed: fixed,
       source: text(draft.source) || "manual",
@@ -1289,8 +1701,8 @@
     return record;
   }
 
-  var ENTRY_FIELDS = ["date", "amount", "direction", "categoryId", "note", "fixed",
-    "source", "confirmed", "recurringId"];
+  var ENTRY_FIELDS = ["date", "amount", "direction", "categoryId", "accountId", "note",
+    "fixed", "source", "confirmed", "recurringId"];
 
   function updateEntry(id, patch) {
     if (!id || !patch) return null;
@@ -1323,6 +1735,7 @@
 
     if (!validateEntry(merged).ok) return null;
     merged.amount = positiveInt(merged.amount);
+    merged.accountId = accountRef(merged.accountId);
     merged.note = text(merged.note).slice(0, 200);
     claim(merged);
 
@@ -1426,6 +1839,20 @@
           });
         }
         if (typeof patch.archived === "boolean") rows[i].archived = patch.archived;
+        /* Colour and icon go through the same normalisers addCategory uses, so
+           a value the picker could never produce — a three-digit hex, half a
+           surrogate pair — is refused here rather than stored and repaired on
+           the next load. An unreadable value leaves the field as it was: the
+           reader asked for a change that cannot be made, and silently writing
+           a different colour would be worse than writing none. */
+        if (Object.prototype.hasOwnProperty.call(patch, "color")) {
+          var tone = toneOf(patch.color);
+          if (tone) rows[i].color = tone;
+        }
+        if (Object.prototype.hasOwnProperty.call(patch, "icon")) {
+          var glyph = iconOf(patch.icon);
+          if (glyph) rows[i].icon = glyph;
+        }
         claim(rows[i]);
         return id;
       }
@@ -1822,6 +2249,9 @@
         amount: positiveInt(r.amount),
         direction: r.direction === "in" ? "in" : "out",
         categoryId: r.categoryId,
+        /* A rule says nothing about which account the payment leaves from, so
+           a generated entry starts unattached like any other. */
+        accountId: null,
         note: text(r.name).slice(0, 200),
         fixed: typeof r.fixed === "boolean" ? r.fixed : !!(cat && cat.fixed),
         source: "recurring",
@@ -2092,6 +2522,233 @@
     });
   }
 
+  function addAccount(draft) {
+    if (!validateAccount(draft).ok) return null;
+    var d = draft;
+    var kind = kindOf(d.kind, "ACCOUNT_KINDS", "cash");
+    var record = {
+      id: util.id("a"),
+      name: text(d.name).trim().slice(0, storeCap("ACCOUNT_NAME_MAX", 60)),
+      kind: kind,
+      opening: int(d.opening),
+      currency: currencyOf(d.currency),
+      color: toneOf(d.color) || spectrumAt(list("accounts").length),
+      icon: iconOf(d.icon) || iconFor("ICON_BY_ACCOUNT_KIND", kind),
+      archived: d.archived === true,
+      createdAt: isDate(d.createdAt) ? d.createdAt : todayDate()
+    };
+    return write("account:add", function (draft) {
+      bucket(draft, "accounts").push(record);
+      return record.id;
+    });
+  }
+
+  function updateAccount(id, patch) {
+    if (!id || !patch) return null;
+    return write("account:update", function (draft) {
+      var rows = bucket(draft, "accounts");
+      for (var i = 0; i < rows.length; i += 1) {
+        if (!rows[i] || rows[i].id !== id) continue;
+        if (Object.prototype.hasOwnProperty.call(patch, "name")) {
+          var name = text(patch.name).trim();
+          if (name) rows[i].name = name.slice(0, storeCap("ACCOUNT_NAME_MAX", 60));
+        }
+        if (Object.prototype.hasOwnProperty.call(patch, "kind")) {
+          rows[i].kind = kindOf(patch.kind, "ACCOUNT_KINDS", rows[i].kind);
+        }
+        if (Object.prototype.hasOwnProperty.call(patch, "opening") &&
+            isSignedAmount(patch.opening)) {
+          rows[i].opening = int(patch.opening);
+        }
+        if (Object.prototype.hasOwnProperty.call(patch, "currency")) {
+          rows[i].currency = currencyOf(patch.currency);
+        }
+        if (Object.prototype.hasOwnProperty.call(patch, "color")) {
+          var tone = toneOf(patch.color);
+          if (tone) rows[i].color = tone;
+        }
+        if (Object.prototype.hasOwnProperty.call(patch, "icon")) {
+          var icon = iconOf(patch.icon);
+          if (icon) rows[i].icon = icon;
+        }
+        if (typeof patch.archived === "boolean") rows[i].archived = patch.archived;
+        claim(rows[i]);
+        return id;
+      }
+      return null;
+    });
+  }
+
+  /* §3.2: an account is where a payment came from, never the payment itself, so
+     deleting one leaves every entry exactly as it was typed and costs it only
+     the link. The count of detached entries comes back with the record because
+     accounts.removed tells the reader how many entries are now unattached, and
+     once the account is gone they cannot count them for themselves. */
+  function removeAccount(id) {
+    if (!id) return null;
+    return write("account:remove", function (draft) {
+      var rows = bucket(draft, "accounts");
+      var removed = null;
+      for (var i = 0; i < rows.length; i += 1) {
+        if (rows[i] && rows[i].id === id) {
+          removed = rows.splice(i, 1)[0];
+          break;
+        }
+      }
+      if (!removed) return null;
+      var detached = 0;
+      bucket(draft, "entries").forEach(function (entry) {
+        if (entry && entry.accountId === id) {
+          entry.accountId = null;
+          detached += 1;
+        }
+      });
+      return { record: removed, detached: detached };
+    });
+  }
+
+  /* §3.3: a price is only ever a price on a day, so every change to unitPrice
+     leaves a row behind. One row per date — a second edit on the same day is a
+     correction of that day's reading, not a second reading — and when the
+     history reaches its ceiling the newest rows are the ones kept, because the
+     current value and the right-hand end of the chart are read from those. */
+  function recordPrice(record, unitPrice, date) {
+    if (!Array.isArray(record.history)) record.history = [];
+    var history = record.history;
+    var replaced = false;
+    for (var i = 0; i < history.length; i += 1) {
+      if (history[i] && history[i].date === date) {
+        /* Only the price is touched, so anything else a file carried on that
+           row survives the correction. */
+        history[i].unitPrice = unitPrice;
+        replaced = true;
+        break;
+      }
+    }
+    if (!replaced) history.push({ date: date, unitPrice: unitPrice });
+    history.sort(byDateAscending);
+    var ceiling = storeCap("HISTORY_MAX", 400);
+    if (history.length > ceiling) record.history = history.slice(history.length - ceiling);
+
+    /* The stored price is the newest row rather than the one just typed, so
+       filling in a price the reader missed last month cannot make the holding
+       read at a stale price today. store.js repairs an unreadable unitPrice
+       from the same row, so a record and its own history cannot disagree. */
+    var newest = record.history[record.history.length - 1];
+    record.unitPrice = newest.unitPrice;
+    record.priceDate = newest.date;
+  }
+
+  function addInvestment(draft) {
+    if (!validateInvestment(draft).ok) return null;
+    var d = draft;
+    var kind = kindOf(d.kind, "INVESTMENT_KINDS", "other");
+    var unitPrice = positiveInt(d.unitPrice);
+    var priceDate = isDate(d.priceDate) ? d.priceDate : todayDate();
+    var record = {
+      id: util.id("i"),
+      name: text(d.name).trim().slice(0, storeCap("INVESTMENT_NAME_MAX", 80)),
+      kind: kind,
+      quantity: positiveInt(d.quantity),
+      unitCost: positiveInt(d.unitCost),
+      unitPrice: unitPrice,
+      priceDate: priceDate,
+      currency: currencyOf(d.currency),
+      note: text(d.note).slice(0, storeCap("NOTE_MAX", 200)),
+      color: toneOf(d.color) || spectrumAt(list("investments").length),
+      icon: iconOf(d.icon) || iconFor("ICON_BY_INVESTMENT_KIND", kind),
+      archived: d.archived === true,
+      createdAt: isDate(d.createdAt) ? d.createdAt : todayDate(),
+      /* store.js deliberately does not invent a first history row, so the price
+         typed on the add row is recorded here or the holding's opening price is
+         lost the first time it is corrected — and §5.2's chart, which appears
+         once there are two prices, would never see the first of them. */
+      history: priceDate ? [{ date: priceDate, unitPrice: unitPrice }] : []
+    };
+    return write("investment:add", function (draft) {
+      bucket(draft, "investments").push(record);
+      return record.id;
+    });
+  }
+
+  function updateInvestment(id, patch) {
+    if (!id || !patch) return null;
+    return write("investment:update", function (draft) {
+      var rows = bucket(draft, "investments");
+      for (var i = 0; i < rows.length; i += 1) {
+        if (!rows[i] || rows[i].id !== id) continue;
+        var record = rows[i];
+        if (Object.prototype.hasOwnProperty.call(patch, "name")) {
+          var name = text(patch.name).trim();
+          if (name) record.name = name.slice(0, storeCap("INVESTMENT_NAME_MAX", 80));
+        }
+        if (Object.prototype.hasOwnProperty.call(patch, "kind")) {
+          record.kind = kindOf(patch.kind, "INVESTMENT_KINDS", record.kind);
+        }
+        if (Object.prototype.hasOwnProperty.call(patch, "quantity") && isCount(patch.quantity)) {
+          record.quantity = positiveInt(patch.quantity);
+        }
+        if (Object.prototype.hasOwnProperty.call(patch, "unitCost") && isCount(patch.unitCost)) {
+          record.unitCost = positiveInt(patch.unitCost);
+        }
+        if (Object.prototype.hasOwnProperty.call(patch, "currency")) {
+          record.currency = currencyOf(patch.currency);
+        }
+        if (Object.prototype.hasOwnProperty.call(patch, "note")) {
+          record.note = text(patch.note).slice(0, storeCap("NOTE_MAX", 200));
+        }
+        if (Object.prototype.hasOwnProperty.call(patch, "color")) {
+          var tone = toneOf(patch.color);
+          if (tone) record.color = tone;
+        }
+        if (Object.prototype.hasOwnProperty.call(patch, "icon")) {
+          var icon = iconOf(patch.icon);
+          if (icon) record.icon = icon;
+        }
+        if (typeof patch.archived === "boolean") record.archived = patch.archived;
+        /* A price moved through the edit form is still a price on a day, so it
+           goes through the same history as the one-field update row. */
+        if (Object.prototype.hasOwnProperty.call(patch, "unitPrice") && isCount(patch.unitPrice)) {
+          var when = isDate(patch.priceDate) ? patch.priceDate : todayDate();
+          if (when) recordPrice(record, positiveInt(patch.unitPrice), when);
+        } else if (isDate(patch.priceDate)) {
+          record.priceDate = patch.priceDate;
+        }
+        claim(record);
+        return id;
+      }
+      return null;
+    });
+  }
+
+  function setInvestmentPrice(id, unitPrice, date) {
+    if (!id || !isCount(unitPrice)) return null;
+    var price = positiveInt(unitPrice);
+    var when = isDate(date) ? date : todayDate();
+    if (!when) return null;
+    return write("investment:price", function (draft) {
+      var rows = bucket(draft, "investments");
+      for (var i = 0; i < rows.length; i += 1) {
+        if (!rows[i] || rows[i].id !== id) continue;
+        recordPrice(rows[i], price, when);
+        claim(rows[i]);
+        return id;
+      }
+      return null;
+    });
+  }
+
+  function removeInvestment(id) {
+    if (!id) return null;
+    return write("investment:remove", function (draft) {
+      var rows = bucket(draft, "investments");
+      for (var i = 0; i < rows.length; i += 1) {
+        if (rows[i] && rows[i].id === id) return rows.splice(i, 1)[0];
+      }
+      return null;
+    });
+  }
+
   /* ------------------------------------------------------------- exports */
 
   Moon.Model = {
@@ -2114,11 +2771,27 @@
     goalProgress: goalProgress,
     debtTotals: debtTotals,
 
+    accounts: accounts,
+    accountById: accountById,
+    accountBalance: accountBalance,
+    accountTotals: accountTotals,
+    accountFlow: accountFlow,
+
+    investments: investments,
+    investmentById: investmentById,
+    investmentValue: investmentValue,
+    investmentTotals: investmentTotals,
+    investmentSeries: investmentSeries,
+
+    netWorth: netWorth,
+
     validateEntry: validateEntry,
     validateLimit: validateLimit,
     validateRecurring: validateRecurring,
     validateGoal: validateGoal,
     validateDebt: validateDebt,
+    validateAccount: validateAccount,
+    validateInvestment: validateInvestment,
 
     addEntry: addEntry,
     addEntries: addEntries,
@@ -2150,6 +2823,15 @@
     updateDebt: updateDebt,
     removeDebt: removeDebt,
     settleDebt: settleDebt,
+
+    addAccount: addAccount,
+    updateAccount: updateAccount,
+    removeAccount: removeAccount,
+
+    addInvestment: addInvestment,
+    updateInvestment: updateInvestment,
+    setInvestmentPrice: setInvestmentPrice,
+    removeInvestment: removeInvestment,
 
     duplicateKey: duplicateKey
   };
@@ -2252,13 +2934,21 @@
         limits: [],
         recurring: [],
         goals: [],
-        debts: []
+        debts: [],
+        accounts: [],
+        investments: []
       };
       var st = util.clone(base);
       if (overrides) Object.keys(overrides).forEach(function (key) { st[key] = overrides[key]; });
       fixtures = {
         Dates: fixtureDates(today),
-        Money: { pct: function (part, whole) { return whole ? Math.round((part / whole) * 100) : null; } },
+        /* The scale is repeated here rather than read from Moon.Money on
+           purpose: it checks the ×10⁴ arithmetic against the number §3.3 names,
+           not against whatever money.js happens to say today. */
+        Money: {
+          QUANTITY_SCALE: 10000,
+          pct: function (part, whole) { return whole ? Math.round((part / whole) * 100) : null; }
+        },
         Store: {
           state: st,
           update: function (mutator) {
@@ -2829,6 +3519,295 @@
         direction: "out", dayOfMonth: 5, occurrences: [] }, {}).recurringId, null);
     eq("promote.refusedNoWrite", writeCount, 0);
     eq("promote.refusedRuleCount", st.recurring.length, 0);
+
+    /* ------------------------------------- 16 — accounts and holdings */
+
+    function account(id, name, kind, opening) {
+      return { id: id, name: name, kind: kind, opening: opening, currency: "TRY",
+        color: "#8AA6FF", icon: "🏦", archived: false, createdAt: "2026-09-01" };
+    }
+
+    function holding(id, kind, quantity, unitCost, unitPrice, history) {
+      return { id: id, name: id, kind: kind, quantity: quantity, unitCost: unitCost,
+        unitPrice: unitPrice, priceDate: "2026-09-21", currency: "TRY", note: "",
+        color: "#8AA6FF", icon: "📈", archived: false, createdAt: "2026-09-01",
+        history: history || [] };
+    }
+
+    function openDebt(id, amount, dir) {
+      return { id: id, person: id, amount: amount, direction: dir, date: "2026-09-10",
+        dueDate: null, settled: false, settledDate: null, note: "" };
+    }
+
+    /* 16a — opening plus income minus expense. An entry with no account stays
+             out of every balance, which is what makes the account optional. */
+    st = scene("2026-09-21", {
+      accounts: [account("a_bank", "Garanti", "bank", 500000),
+        account("a_card", "Kart", "card", -250000)],
+      entries: [
+        entry("e1", "2026-09-05", 120000, "c_groc", { accountId: "a_bank" }),
+        entry("e2", "2026-09-06", 4200000, "c_sal", { accountId: "a_bank", direction: "in" }),
+        entry("e3", "2026-09-07", 30000, "c_fun", { accountId: "a_card" }),
+        entry("e4", "2026-09-08", 9999, "c_groc", null)
+      ]
+    });
+    eq("account.balance", accountBalance("a_bank"), 4580000);
+    /* A card opens the month owing money and the sign survives the sum. */
+    eq("account.cardBalance", accountBalance("a_card"), -280000);
+    eq("account.unknown", accountBalance("a_nope"), 0);
+    eq("account.total", accountTotals().total, 4300000);
+    eq("account.count", accountTotals().count, 2);
+    eq("account.byKindBank", accountTotals().byKind.bank, 4580000);
+    eq("account.byKindCard", accountTotals().byKind.card, -280000);
+
+    var flow = accountFlow("a_bank", "2026-09");
+    eq("account.flowIn", flow.in, 4200000);
+    eq("account.flowOut", flow.out, 120000);
+    eq("account.flowCount", flow.count, 2);
+    eq("account.flowQuietPeriod", accountFlow("a_card", "2026-08").count, 0);
+
+    st = scene("2026-09-21", {
+      accounts: [account("a_bank", "Garanti", "bank", 100000),
+        { id: "a_old", name: "Kapali", kind: "cash", opening: 700000, currency: "TRY",
+          color: "#8AA6FF", icon: "👛", archived: true, createdAt: "2026-01-01" }]
+    });
+    eq("account.archivedHidden", accounts().length, 1);
+    eq("account.archivedListed", accounts({ all: true }).length, 2);
+    /* The total above the cards has to be the sum of the cards under it. */
+    eq("account.archivedOutOfTotal", accountTotals().total, 100000);
+
+    /* 16b — the load-bearing one: deleting an account costs the reader the link
+             and never an entry. */
+    st = scene("2026-09-21", {
+      accounts: [account("a_bank", "Garanti", "bank", 500000)],
+      entries: [
+        entry("e1", "2026-09-05", 120000, "c_groc", { accountId: "a_bank" }),
+        entry("e2", "2026-09-06", 30000, "c_fun", { accountId: "a_bank" }),
+        entry("e3", "2026-09-07", 9999, "c_groc", { accountId: null })
+      ]
+    });
+    var detachment = removeAccount("a_bank");
+    eq("account.removedName", detachment.record.name, "Garanti");
+    eq("account.removedDetached", detachment.detached, 2);
+    eq("account.removedGone", st.accounts.length, 0);
+    eq("account.entriesKept", st.entries.length, 3);
+    ok("account.entriesDetached", st.entries.every(function (e) {
+      return e.accountId === null;
+    }));
+    eq("account.entryAmountKept", st.entries[0].amount, 120000);
+    eq("account.entryDateKept", st.entries[0].date, "2026-09-05");
+    eq("account.removeMissing", removeAccount("a_nope"), null);
+
+    st = scene("2026-09-21", {});
+    var accountId = addAccount({ name: "  Nakit  ", kind: "cash", opening: -1500 });
+    ok("account.added", !!accountId);
+    eq("account.nameTrimmed", st.accounts[0].name, "Nakit");
+    eq("account.openingSignKept", st.accounts[0].opening, -1500);
+    eq("account.createdAt", st.accounts[0].createdAt, "2026-09-21");
+    ok("account.dressed", !!st.accounts[0].icon);
+    addAccount({ name: "Hayali", kind: "crypto" });
+    eq("account.unlistedKindDefaults", st.accounts[1].kind, "cash");
+    eq("account.nameless", addAccount({ name: "   " }), null);
+    eq("account.namelessKey", validateAccount({ name: "" }).errors.name, "err.nameRequired");
+    eq("account.unreadableOpening", addAccount({ name: "X", opening: "bes lira" }), null);
+    ok("account.updated", !!updateAccount(accountId, { name: "Cuzdan", kind: "savings" }));
+    eq("account.updatedName", st.accounts[0].name, "Cuzdan");
+    eq("account.updatedKind", st.accounts[0].kind, "savings");
+    eq("account.updateMissing", updateAccount("a_nope", { name: "X" }), null);
+
+    /* An account only reaches a balance if the entry write path carries it, so
+       the shape the model writes is checked here rather than assumed. */
+    st = scene("2026-09-21", {
+      accounts: [account("a_bank", "Garanti", "bank", 0), account("a_card", "Kart", "card", 0)]
+    });
+    var attached = addEntry({ date: "2026-09-10", amount: 50000, direction: "out",
+      categoryId: "c_groc", accountId: "a_bank" });
+    ok("entry.written", !!attached);
+    eq("entry.accountStored", st.entries[0].accountId, "a_bank");
+    eq("entry.accountCounted", accountBalance("a_bank"), -50000);
+    updateEntry(attached, { accountId: "a_card" });
+    eq("entry.accountMoved", st.entries[0].accountId, "a_card");
+    eq("entry.movedOffBank", accountBalance("a_bank"), 0);
+    eq("entry.movedOntoCard", accountBalance("a_card"), -50000);
+    updateEntry(attached, { accountId: null });
+    eq("entry.accountCleared", st.entries[0].accountId, null);
+    addEntry({ date: "2026-09-11", amount: 100, direction: "out", categoryId: "c_groc" });
+    eq("entry.unattachedByDefault", st.entries[1].accountId, null);
+    /* The entry still counts everywhere it counted before accounts existed. */
+    eq("entry.stillSpending", periodSummary("2026-09").spentTotal, 50100);
+
+    /* 16c — §3.3's arithmetic. Quantity carries four implied decimals, so half
+             a unit is 5000, and each product is rounded exactly once. */
+    scene("2026-09-21", {
+      investments: [
+        holding("i_btc", "crypto", 5000, 180000000, 240000000),
+        holding("i_thy", "stock", 1000000, 24500, 31200),
+        holding("i_fund", "fund", 30000, 500000, 450000)
+      ]
+    });
+    var half = investmentValue(investmentById("i_btc"));
+    eq("holding.halfUnitValue", half.value, 120000000);
+    eq("holding.halfUnitCost", half.cost, 90000000);
+    eq("holding.halfUnitGain", half.gain, 30000000);
+    eq("holding.halfUnitPct", half.gainRatio, 33);
+
+    var shares = investmentValue(investmentById("i_thy"));
+    eq("holding.value", shares.value, 3120000);
+    eq("holding.cost", shares.cost, 2450000);
+    eq("holding.gainPct", shares.gainRatio, 27);
+
+    /* A loss is a negative gain and a negative percentage, never a magnitude
+       the view has to work the sign of out for itself. */
+    var losing = investmentValue(investmentById("i_fund"));
+    eq("holding.lossValue", losing.value, 1350000);
+    eq("holding.lossGain", losing.gain, -150000);
+    eq("holding.lossPct", losing.gainRatio, -10);
+    ok("holding.uncostedPct",
+      investmentValue(holding("i_x", "other", 10000, 0, 5000)).gainRatio === null);
+
+    var portfolio = investmentTotals();
+    eq("holding.totalValue", portfolio.value, 124470000);
+    eq("holding.totalCost", portfolio.cost, 93950000);
+    eq("holding.totalGain", portfolio.gain, 30520000);
+    eq("holding.totalCount", portfolio.count, 3);
+    eq("holding.byKind", portfolio.byKind.crypto.value, 120000000);
+    eq("holding.kindsWidestFirst", portfolio.kinds[0].kind, "crypto");
+    eq("holding.kindShare", portfolio.kinds[0].share, pct(120000000, 124470000));
+
+    /* 16d — a price is a price on a day, and a second edit on the same day is a
+             correction of that day rather than a second reading. */
+    st = scene("2026-09-21", {
+      investments: [holding("i_thy", "stock", 1000000, 24500, 24500,
+        [{ date: "2026-09-02", unitPrice: 24500 }])]
+    });
+    ok("price.set", !!setInvestmentPrice("i_thy", 31200, "2026-09-21"));
+    eq("price.appended", st.investments[0].history.length, 2);
+    eq("price.current", st.investments[0].unitPrice, 31200);
+    eq("price.currentDate", st.investments[0].priceDate, "2026-09-21");
+    ok("price.again", !!setInvestmentPrice("i_thy", 30500, "2026-09-21"));
+    eq("price.replacedCount", st.investments[0].history.length, 2);
+    eq("price.replacedValue", st.investments[0].history[1].unitPrice, 30500);
+    /* A price filled in for an earlier day slots into place and does not become
+       the price the holding is read at today. */
+    setInvestmentPrice("i_thy", 20000, "2026-08-15");
+    eq("price.oldestFirst",
+      st.investments[0].history.map(function (p) { return p.date; }).join(","),
+      "2026-08-15,2026-09-02,2026-09-21");
+    eq("price.newestStillCurrent", st.investments[0].unitPrice, 30500);
+    eq("price.newestDateStillCurrent", st.investments[0].priceDate, "2026-09-21");
+    eq("price.missingHolding", setInvestmentPrice("i_nope", 100, "2026-09-21"), null);
+    eq("price.unreadable", setInvestmentPrice("i_thy", "bedava", "2026-09-21"), null);
+
+    st = scene("2026-09-21", { investments: [holding("i_many", "gold", 10000, 1000, 1000, [])] });
+    var ceiling = storeCap("HISTORY_MAX", 400);
+    st.investments[0].history = dates().eachDay("2025-06-01", "2026-09-20")
+      .map(function (day, index) { return { date: day, unitPrice: 1000 + index }; });
+    setInvestmentPrice("i_many", 9999, "2026-09-21");
+    eq("price.capped", st.investments[0].history.length, ceiling);
+    eq("price.cappedNewest", st.investments[0].history[ceiling - 1].unitPrice, 9999);
+    ok("price.cappedOldestDropped", st.investments[0].history[0].date > "2025-06-01");
+
+    /* 16e — the add row writes the opening history row itself, because the
+             store does not invent one and §5.2's chart needs the first price. */
+    st = scene("2026-09-21", {});
+    var holdingId = addInvestment({ name: "THYAO", kind: "stock", quantity: 1000000,
+      unitCost: 24500, unitPrice: 31200 });
+    ok("holding.added", !!holdingId);
+    eq("holding.openingRows", st.investments[0].history.length, 1);
+    eq("holding.openingRowDate", st.investments[0].history[0].date, "2026-09-21");
+    eq("holding.openingRowPrice", st.investments[0].history[0].unitPrice, 31200);
+    eq("holding.priceDate", st.investments[0].priceDate, "2026-09-21");
+    addInvestment({ name: "Tarla", kind: "field", quantity: 10000, unitPrice: 100 });
+    eq("holding.unlistedKindDefaults", st.investments[1].kind, "other");
+    eq("holding.nameless", addInvestment({ name: "", quantity: 10000, unitPrice: 100 }), null);
+    eq("holding.priceRequiredKey",
+      validateInvestment({ name: "X", quantity: 10000 }).errors.unitPrice, "err.priceRequired");
+    eq("holding.fractionalQuantity",
+      validateInvestment({ name: "X", quantity: 0.5, unitPrice: 100 }).errors.quantity,
+      "err.quantityInvalid");
+    eq("holding.negativeQuantity",
+      validateInvestment({ name: "X", quantity: -10000, unitPrice: 100 }).errors.quantity,
+      "err.quantityInvalid");
+    ok("holding.zeroQuantityKept",
+      validateInvestment({ name: "X", quantity: 0, unitPrice: 100 }).ok);
+    eq("holding.removedRecord", (removeInvestment(holdingId) || {}).name, "THYAO");
+    eq("holding.removeMissing", removeInvestment("i_nope"), null);
+
+    /* 16f — one point per date that carries a price, oldest first, every
+             holding read at the newest price typed on or before it. */
+    scene("2026-09-21", {
+      investments: [
+        holding("i_a", "stock", 10000, 1000, 3000, [
+          { date: "2026-07-01", unitPrice: 1000 },
+          { date: "2026-09-01", unitPrice: 3000 }
+        ]),
+        holding("i_b", "gold", 20000, 5000, 6000, [
+          { date: "2026-08-01", unitPrice: 5000 },
+          { date: "2026-09-01", unitPrice: 6000 }
+        ])
+      ]
+    });
+    var series = investmentSeries(12);
+    eq("series.points", series.length, 3);
+    eq("series.oldestFirst", series.map(function (p) { return p.date; }).join(","),
+      "2026-07-01,2026-08-01,2026-09-01");
+    /* Before its first price the gold counts as nothing, not as its cost. */
+    eq("series.firstPoint", series[0].value, 1000);
+    eq("series.secondPoint", series[1].value, 11000);
+    eq("series.thirdPoint", series[2].value, 15000);
+    eq("series.window", investmentSeries(2).length, 2);
+    eq("series.deterministic",
+      JSON.stringify(investmentSeries(12)), JSON.stringify(investmentSeries(12)));
+
+    scene("2026-09-21", {});
+    eq("series.noHoldings", investmentSeries(12).length, 0);
+
+    /* 16g — net worth across all four parts. A settled debt is closed and sits
+             on neither side of the reading. */
+    scene("2026-09-21", {
+      accounts: [account("a_bank", "Garanti", "bank", 500000),
+        account("a_card", "Kart", "card", -250000)],
+      investments: [holding("i_thy", "stock", 1000000, 24500, 31200)],
+      entries: [entry("e1", "2026-09-05", 100000, "c_groc", { accountId: "a_bank" })],
+      debts: [openDebt("d1", 75000, "owedToMe"), openDebt("d2", 300000, "iOwe"),
+        { id: "d3", person: "Eski", amount: 999999, direction: "iOwe", date: "2026-01-01",
+          dueDate: null, settled: true, settledDate: "2026-02-01", note: "" }]
+    });
+    var worth = netWorth();
+    eq("networth.cash", worth.cash, 150000);
+    eq("networth.investments", worth.investments, 3120000);
+    eq("networth.owedToMe", worth.owedToMe, 75000);
+    eq("networth.iOwe", worth.iOwe, 300000);
+    eq("networth.assets", worth.assets, 3345000);
+    eq("networth.liabilities", worth.liabilities, 300000);
+    eq("networth.total", worth.total, 3045000);
+    ok("networth.measured", worth.measured === true);
+    eq("networth.openDebtsOnly", worth.counts.debts, 2);
+
+    /* 16h — an empty store reads as zeros and says it measured nothing, so the
+             view writes a sentence instead of printing a zero as a figure. */
+    scene("2026-09-21", {});
+    var blank = netWorth();
+    eq("networth.emptyCash", blank.cash, 0);
+    eq("networth.emptyInvestments", blank.investments, 0);
+    eq("networth.emptyOwedToMe", blank.owedToMe, 0);
+    eq("networth.emptyIOwe", blank.iOwe, 0);
+    eq("networth.emptyAssets", blank.assets, 0);
+    eq("networth.emptyLiabilities", blank.liabilities, 0);
+    eq("networth.emptyTotal", blank.total, 0);
+    ok("networth.emptyUnmeasured", blank.measured === false);
+    eq("networth.emptyAccountTotal", accountTotals().total, 0);
+    eq("networth.emptyHoldingValue", investmentTotals().value, 0);
+    ok("networth.emptyGainRatio", investmentTotals().gainRatio === null);
+
+    /* A file written before v2 carries neither collection, and every read has
+       to answer rather than throw while the migration catches up. */
+    st = scene("2026-09-21", {});
+    delete st.accounts;
+    delete st.investments;
+    eq("networth.missingCollections", netWorth().total, 0);
+    eq("account.missingCollection", accounts().length, 0);
+    eq("series.missingCollection", investmentSeries(12).length, 0);
 
     fixtures = null;
 

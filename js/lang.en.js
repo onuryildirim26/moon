@@ -37,6 +37,8 @@
     "nav.recurring": "Recurring",
     "nav.goals": "Goals",
     "nav.debts": "Debts",
+    "nav.accounts": "Accounts",
+    "nav.investments": "Investments",
     "nav.data": "Data",
     "nav.more": "More",
 
@@ -74,8 +76,16 @@
     "common.language": "Language",
     "common.theme": "Theme",
     "common.theme.system": "System",
-    "common.theme.dial": "Dial",
-    "common.theme.paper": "Paper",
+    /* The key here names the stored value, not the word on screen, and §2.2
+       renamed the two surfaces while leaving the stored dial and paper alone so
+       that a setting written by an older build still reads. The label for dial
+       is therefore Night and the label for paper is Dawn. The .night and .dawn
+       keys carry the same two words under the names the interface uses from
+       here on, so the theme control reads the same whichever it asks for. */
+    "common.theme.dial": "Night",
+    "common.theme.paper": "Dawn",
+    "common.theme.night": "Night",
+    "common.theme.dawn": "Dawn",
     "common.theme.prism": "Prism",
     "common.lang.tr": "Turkish",
     "common.lang.en": "English",
@@ -208,6 +218,10 @@
     /* --------------------------------------------------------- limits ---- */
 
     "limits.title": "Limits",
+    /* The row's own face is also the button that changes it: pressing it
+       unfolds the colour and icon pickers. The name says what unfolds, because
+       what sits on the button is a dot and a glyph rather than any text. */
+    "limits.category.appearance": "Colour and icon",
     "limits.category.archive": "Archive",
     "limits.category.unarchive": "Unarchive",
     "limits.category.removed": "{name} deleted, {count} entries moved to Other.",
@@ -351,6 +365,115 @@
     "debts.delete.title": "Delete this record?",
     "debts.delete.body": "This debt record goes. Entries in the ledger are untouched.",
     "debts.note": "Debts and credits stay out of the allowance and limit math.",
+
+    /* ------------------------------------------------------- accounts ---- */
+
+    "accounts.title": "Accounts",
+    "accounts.name": "Account name",
+    /* Repairing a record whose name could not be read, the Store has to write
+       some name: an empty one leaves the card indistinguishable from the next
+       nameless card. This says the record arrived without a name, where the
+       categories' "Unclassified" would be the wrong word for an account. */
+    "accounts.untitled": "Unnamed account",
+    "accounts.balance": "Balance",
+    /* UI.inlineValue turns a labelKey into an aria-label, and an aria-label
+       stands in place of the text beneath it rather than adding to it. So
+       these two carry the reading itself; without it the control announces
+       only what it is and drops the figure a reader came for. */
+    "accounts.name.edit": "Change the account name: {name}",
+    "accounts.balance.edit": "Change the balance: {amount}",
+    "accounts.opening": "Opening balance",
+    "accounts.opening.hint": "Entries are added on top of this amount. A credit card can be negative.",
+    "accounts.total": "Accounts total {amount}",
+    /* The card draws whichever period the header is showing, not necessarily
+       the month we are in. Name a month and browsing back to September prints
+       September's movement under the words "this month"; the sentence names no
+       period and so stays true for every one of them. */
+    "accounts.flow": "{in} in and {out} out this period.",
+    "accounts.flow.none": "No movement in this account this period.",
+    "accounts.kind.cash": "Cash",
+    "accounts.kind.bank": "Bank",
+    "accounts.kind.card": "Credit card",
+    "accounts.kind.savings": "Savings",
+    "accounts.form.title.new": "Add an account",
+    "accounts.form.title.edit": "Edit the account",
+    "accounts.form.submit": "Add the account",
+    "accounts.form.submit.edit": "Update the account",
+    "accounts.addChip": "Add account",
+    "accounts.archive": "Archive",
+    "accounts.unarchive": "Unarchive",
+    "accounts.archived": "Archived",
+    "accounts.delete.title": "Delete this account?",
+    "accounts.delete.body": "The account goes and the entries stay. Entries linked to it remain in the ledger and only lose the link.",
+    "accounts.saved": "The account was saved.",
+    "accounts.removed": "{name} was deleted and {count} entries lost their account link.",
+    "accounts.removed.one": "{name} was deleted and {count} entry lost its account link.",
+    "accounts.removed.other": "{name} was deleted and {count} entries lost their account link.",
+    "accounts.empty.heading": "No accounts yet.",
+    "accounts.empty.body": "Write down where your money sits: cash, a bank, a card, savings. I add the balances up here and carry them into your net worth.",
+    "accounts.empty.action": "Add the first account",
+
+    /* ---------------------------------------------------- investments ---- */
+
+    "investments.title": "Investments",
+    "investments.name": "Holding name",
+    /* The holding side of the nameless record, with its own text so that a
+       holding is never named as though it were an account. */
+    "investments.untitled": "Unnamed holding",
+    "investments.quantity": "Quantity",
+    "investments.quantity.hint": "At most four decimal places are read; 0.5 works.",
+    "investments.unitCost": "Unit cost",
+    "investments.unitCost.hint": "What one unit cost you.",
+    "investments.unitPrice": "Unit price",
+    "investments.unitPrice.hint": "What one unit is worth today. You type the price; Moon never goes online.",
+    "investments.value": "Value",
+    "investments.cost": "Cost",
+    "investments.gain": "Gain",
+    "investments.gainPct": "{pct}%",
+    "investments.gainLine": "Gain {amount}, {pct}%",
+    "investments.qtyLine": "{quantity} × {price}",
+    "investments.priceDate": "Price updated on {date}.",
+    "investments.updatePrice": "Update the price",
+    "investments.priceSaved": "The new price was saved.",
+    "investments.byKind": "By kind",
+    "investments.byKind.row": "{name}, {amount}, {pct}% of the total",
+    "investments.chart.none": "The value trail needs at least two prices. The moment you type a second one, the chart appears here.",
+    "investments.kind.stock": "Shares",
+    "investments.kind.fund": "Fund",
+    "investments.kind.crypto": "Crypto",
+    "investments.kind.gold": "Gold",
+    "investments.kind.fx": "Currency",
+    "investments.kind.property": "Property",
+    "investments.kind.other": "Other",
+    "investments.form.title.new": "Add a holding",
+    "investments.form.title.edit": "Edit the holding",
+    "investments.form.submit": "Add the holding",
+    "investments.form.submit.edit": "Update the holding",
+    /* The archive actions read the same as their siblings on the accounts side
+       but carry keys of their own, so that a language needing a different verb
+       for a holding does not drag the account cards' wording along with it. */
+    "investments.archive": "Archive",
+    "investments.unarchive": "Unarchive",
+    "investments.archived": "Archived",
+    "investments.delete.title": "Delete this holding?",
+    "investments.delete.body": "The holding and its price history go. Entries in the ledger are untouched.",
+    "investments.saved": "The holding was saved.",
+    "investments.removed": "{name} was deleted.",
+    "investments.empty.heading": "No holdings yet.",
+    "investments.empty.body": "Write what you hold: shares, a fund, gold, currency, a flat. Give me the quantity and the unit price and I measure the value into your net worth.",
+    "investments.empty.action": "Add the first holding",
+
+    /* ------------------------------------------------------- networth ---- */
+
+    "networth.label": "Net worth",
+    "networth.assets": "Assets",
+    "networth.liabilities": "Liabilities",
+    "networth.cash": "Cash",
+    "networth.investments": "Investments",
+    "networth.owedToMe": "Owed to me",
+    "networth.iOwe": "I owe",
+    "networth.day": "day {dayIndex} of {days}",
+    "networth.empty": "Net worth has not been measured yet. Write an account or a holding and it shows up here; an unmeasured number is not printed as a zero.",
 
     /* ----------------------------------------------------------- data ---- */
 
@@ -527,6 +650,11 @@
     "form.fixed": "Fixed payment",
     "form.name": "Name",
     "form.kind": "Kind",
+    /* The name of the colour picker's radio group and of the icon picker's
+       fold toggle. Neither carries any text of its own — one is ten dots, the
+       other a single glyph — so their name comes from here alone. */
+    "form.color": "Colour",
+    "form.icon": "Icon",
     "form.startDate": "Starts",
     "form.endDate": "Ends",
     "form.endDate.hint": "Leave it empty for no end.",
@@ -545,6 +673,10 @@
     "err.badAmount": "The amount could not be read. Use digits with a comma or a dot; letters and spaces are not read.",
     "err.zeroAmount": "The amount is zero. There is nothing to measure in a zero entry; write the real amount.",
     "err.negativeAmount": "The amount is written as negative. Direction comes from the Expense and Income field, so the amount stays positive.",
+    "err.quantityInvalid": "The quantity could not be read. At most four decimal places are read; write it like 0.5 or 12.3456.",
+    "err.quantityPrecision": "The quantity has more than four decimal places. The extra digits are refused rather than rounded away behind your back; shorten it to four.",
+    "err.quantityNegative": "The quantity is written as negative. A holding is written as the amount you have; to record a sale, lower the quantity instead.",
+    "err.priceRequired": "The unit price is empty. Without a price the value cannot be measured; write what one unit is worth today.",
     "err.tooLong": "The text is too long. At most {max} characters are stored; shorten it and try again.",
     "err.noteTooLong": "The note is too long. At most 200 characters are stored; shorten it and try again.",
     "form.dateHint": "Day, month, year. You can also pick from the calendar.",
@@ -611,6 +743,7 @@
     "a11y.rail": "Sections",
     "a11y.railMore": "Other sections",
     "a11y.strip": "Announcements and undo",
+    "a11y.accounts": "Accounts and their balances",
     "a11y.periodPrev": "Previous period",
     "a11y.periodNext": "Next period",
     "a11y.periodCurrent": "Showing the period {period}",
@@ -624,6 +757,9 @@
     "a11y.chart.flow.desc": "One bar for each day of the period. Income totals {in}, expense totals {out}.",
     "a11y.chart.cumulative.desc": "Total expense from the start of the period until today is {total}, against a pace of {pace} for the same day.",
     "a11y.chart.year.desc": "The last twelve periods across {rows} categories. Density comes from line spacing.",
+    /* The value trail's own <desc>. What a chart of value answers is "how much
+       now", so the newest reading is what it states. */
+    "a11y.chart.value.desc": "The value of your holdings over time. The newest reading is {amount} on {date}.",
     "a11y.chart.point": "{date}, {amount}",
     "a11y.chart.pointPct": "{name}, {amount}, {pct}% of the total",
     "a11y.langChanged": "The language changed to {lang}.",
