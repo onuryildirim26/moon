@@ -5,6 +5,8 @@ no dependencies — one HTML file and a handful of plain JavaScript files.
 
 **[Open Moon →](https://onuryildirim26.github.io/moon/)** · [Türkçe](#moon--bütçe-defteri)
 
+[<img src="assets/coffee.png" alt="Buy me a coffee" width="240">](https://buymeacoffee.com/onuryildirim26)
+
 ![Moon's dashboard: the remaining daily allowance, the allowance trail and category limit scales](assets/onizleme.png)
 
 ---
@@ -163,9 +165,11 @@ each with a fallback path.
 
 Moon is free and MIT licensed. Nothing to pay, no account to open, nothing withheld — and
 that is not going to change. If it saved you an evening and you would like to send
-something, there is a [coffee](https://buymeacoffee.com/onuryildirim26). It buys nothing:
-no feature behind it, no banner to remove, no advertisement you are not seeing. The app
-itself never asks for money anywhere, and never will.
+something, there is a coffee. It buys nothing: no feature behind it, no banner to remove,
+no advertisement you are not seeing. The app itself never asks for money anywhere, and
+never will.
+
+[<img src="assets/coffee.png" alt="Buy me a coffee" width="240">](https://buymeacoffee.com/onuryildirim26)
 
 ## Licence
 
@@ -278,9 +282,10 @@ ondalığı virgülle yazar.
 
 Moon ücretsiz ve MIT lisanslı; hiçbir şey ödemeden, hesap açmadan, bir şey sormadan
 kullanılır ve öyle kalacak. Bir akşamını kurtardıysa ve bir şey göndermek istersen bir
-[kahve](https://buymeacoffee.com/onuryildirim26) var. Bir karşılığı yok: açılmayan özellik,
-kapanmayan bant, görmediğin bir reklam yok. Uygulamanın kendisi hiçbir yerde para istemez,
-istemeyecek.
+kahve var. Bir karşılığı yok: açılmayan özellik, kapanmayan bant, görmediğin bir reklam
+yok. Uygulamanın kendisi hiçbir yerde para istemez, istemeyecek.
+
+[<img src="assets/coffee.png" alt="Buy me a coffee" width="240">](https://buymeacoffee.com/onuryildirim26)
 
 ## Lisans
 
