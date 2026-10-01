@@ -2,20 +2,23 @@ name: tests
 
 on:
   push:
-    branches: [main]
   pull_request:
+
+permissions:
+  contents: read
 
 jobs:
   test:
+    name: node ${{ matrix.node }}
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [20, 22, 24]
     steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
-          node-version: '22'
-
-      # No install step: the suite uses node:test, node:assert and node:vm, the
-      # same promise the app makes about its own dependencies.
-      - name: Run tests
-        run: node --test tests/selftest.test.js tests/claims.test.js
+          node-version: ${{ matrix.node }}
+      # No install step: Moon has no dependencies, and neither do its tests.
+      - run: node --test tests/*.test.js
