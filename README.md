@@ -3,7 +3,7 @@
 [![tests](https://github.com/onuryildirim26/moon/actions/workflows/test.yml/badge.svg)](https://github.com/onuryildirim26/moon/actions/workflows/test.yml)
 [![licence: MIT](https://img.shields.io/badge/licence-MIT-informational)](LICENSE)
 ![dependencies: 0](https://img.shields.io/badge/dependencies-0-brightgreen)
-[![demo](https://img.shields.io/badge/demo-live-e6a94f)](https://onuryildirim26.github.io/moon/)
+[![demo](https://img.shields.io/badge/demo-live-8AA6FF)](https://onuryildirim26.github.io/moon/)
 
 A budget ledger that runs entirely in your browser. No account, no server, no build step,
 no dependencies — one HTML file and a handful of plain JavaScript files.
@@ -34,21 +34,34 @@ in the period. Fixed costs like rent are pulled out of that pool so one big paym
 
 ## What it does
 
-- **Write entries by hand** — date, amount, category, note. Ten seconds each.
-- **Import a bank statement** — drop a CSV, map the columns once, review what came in.
-  Turkish (`;` and `1.234,56`) and English (`,` and `1,234.56`) statements both work, along
-  with BOM headers, quoted delimiters, preamble junk and repeated header rows.
-- **Monthly limits per category** — shown as an instrument scale with a pace mark, so you
-  see whether you are ahead of or behind the month, not just a percentage.
+- **Write entries by hand** — date, amount, category, note. Enter saves and clears the row
+  for the next one, so a run of entries feels like typing lines, not opening dialogs.
+- **Import a bank statement** — drop a **CSV or a PDF**. The PDF reader is written here from
+  scratch: it inflates the content streams, resolves glyph numbers through each font's
+  ToUnicode map, and rebuilds the table from where the words sit on the page. No library.
+  Turkish (`;` and `1.234,56`) and English (`,` and `1,234.56`) formats both work.
+- **Monthly limits per category** — one rounded bar in the category's own colour, with a
+  pace mark, so you see whether you are ahead of or behind the month. Drag the cap to
+  change a limit, or click the figure and type.
+- **Accounts** — a bank account, cash, a card, savings. Each with an opening balance and a
+  running one. An entry may belong to one; it never has to.
+- **Investments** — shares, funds, gold, currency, crypto, property. Quantity, cost and the
+  price you last typed, with gain in money and per cent, a value trail and a share-by-kind
+  bar. Prices are typed in, never fetched: no API means no key and no account.
+- **Net worth** — cash plus holdings plus what you are owed, less what you owe.
 - **Recurring payments** — rent, bills, subscriptions. Marked as fixed so they stay out of
   the daily allowance and are reported separately.
 - **Savings goals** — how much, by when, and what that means per month.
 - **Debts** — who owes whom, settled or open. Never mixed into the budget maths.
 - **Charts, hand-drawn in SVG** — an allowance trail, a day seismograph, a cumulative curve
-  against a pace diagonal, and a twelve-month density grid. No chart library, and no pie
-  chart anywhere: the human eye cannot compare eight angles.
+  against a pace diagonal, a twelve-month density grid, a portfolio value trail and a
+  share-by-kind bar. No chart library, and no pie chart anywhere: the human eye cannot
+  compare eight angles.
+- **A colour and an icon on every category, account and holding.**
+- **Installable** — a manifest and a service worker, so you can add Moon to a phone's home
+  screen and use it in flight mode.
 - **Turkish and English**, switchable at any time. Four currencies.
-- **Dark and light** — the dial and the paper. Follows your system unless you pick one.
+- **Night and Dawn**, plus a colourful Prism. Follows your system unless you pick one.
 
 ## Your data
 
@@ -82,11 +95,15 @@ against `file://` on purpose: classic script tags, no ES modules, no `fetch`.
 **Or serve it,** if you prefer a real origin:
 
 ```bash
-python -m http.server 8791
+python .claude/serve.py 8791
 ```
 
-Two sample statements are in `ornek/` if you want to try the importer before trusting it
-with your own: `ornek-ekstre-tr.csv` (Turkish bank format) and `sample-statement-en.csv`.
+That helper exists because `python -m http.server` sends no `Cache-Control`, and a browser
+will happily serve you a script from an edit ago while you wonder why nothing changed.
+
+Three sample statements are in `ornek/` if you want to try the importer before trusting it
+with your own: `ornek-ekstre-tr.csv` (Turkish bank format), `sample-statement-en.csv`, and
+`ornek-ekstre-tr.pdf` — a real printed statement, for the PDF reader.
 There is also a sample month built into the app — one click to load, one to clear.
 
 ## How it is built
@@ -105,14 +122,17 @@ js/lang.tr.js       Turkish catalogue
 js/lang.en.js       English catalogue
 js/i18n.js          lookup, placeholders, plurals
 js/store.js         localStorage, schema validation, migrations, export/import
-js/model.js         records, validation, derived measurements
+js/model.js         records, validation, derived measurements, net worth
 js/csv.js           encoding, delimiter sniffing, quote-aware parser
+js/pdf.js           a PDF text extractor: inflate, ToUnicode, words back into a table
 js/importer.js      column roles, duplicates, review
-js/charts.js        five hand-written SVG charts + the limit scale
-js/ui.js            dialogs, fields, money cells, undo strip, empty states
-js/sample.js        the sample month
+js/charts.js        hand-written SVG charts, the limit bar and the moon phase
+js/ui.js            fields, quick rows, inline values, pickers, undo strip
+js/sample.js        the sample month, its accounts and its holdings
 js/views.*.js       one file per section
-js/app.js           boot, hash router, theme, period
+js/app.js           boot, hash router, theme, period, worker registration
+sw.js               the offline shell
+manifest.webmanifest  what a phone needs to install it
 tests/              node --test, no dependencies (see Tests below)
 ```
 

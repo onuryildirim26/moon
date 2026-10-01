@@ -3,7 +3,7 @@
 [![tests](https://github.com/onuryildirim26/moon/actions/workflows/test.yml/badge.svg)](https://github.com/onuryildirim26/moon/actions/workflows/test.yml)
 [![licence: MIT](https://img.shields.io/badge/licence-MIT-informational)](LICENSE)
 ![dependencies: 0](https://img.shields.io/badge/dependencies-0-brightgreen)
-[![demo](https://img.shields.io/badge/demo-live-e6a94f)](https://onuryildirim26.github.io/moon/)
+[![demo](https://img.shields.io/badge/demo-live-8AA6FF)](https://onuryildirim26.github.io/moon/)
 
 Tamamen tarayıcında çalışan bir bütçe defteri. Hesap yok, sunucu yok, kurulum yok,
 bağımlılık yok — bir HTML dosyası ve birkaç düz JavaScript dosyası.
@@ -34,22 +34,35 @@ felaket gibi göstermez.
 
 ## Ne yapar
 
-- **Elle kayıt** — tarih, tutar, kategori, açıklama. Her biri on saniye.
-- **Ekstre yükleme** — CSV'yi bırak, sütunları bir kez eşleştir, geleni incele.
+- **Elle kayıt** — tarih, tutar, kategori, açıklama. Enter kaydeder ve satırı bir sonraki
+  için boşaltır; arka arkaya kayıt girmek pencere açmak değil, satır yazmak gibi.
+- **Ekstre yükleme** — **CSV ya da PDF** bırak. PDF okuyucu buradan yazıldı: içerik
+  akışlarını açıyor, glif numaralarını her yazı tipinin ToUnicode tablosundan harfe
+  çeviriyor ve tabloyu kelimelerin sayfadaki yerinden yeniden kuruyor. Kütüphane yok.
   Türk bankası biçimi (`;` ve `1.234,56`) ve İngilizce biçim (`,` ve `1,234.56`) birlikte
   çalışır; BOM'lu başlık, tırnak içindeki ayırıcı, baştaki serbest metin ve tekrar eden
   başlık satırları da.
-- **Kategori başına aylık limit** — hız işaretli bir ölçek olarak gösterilir; yüzdeyi değil,
-  ayın önünde mi gerisinde mi olduğunu görürsün.
+- **Kategori başına aylık limit** — kategorinin kendi renginde tek bir yuvarlak çubuk ve
+  üstünde hız işareti; ayın önünde mi gerisinde mi olduğunu görürsün. Limiti değiştirmek
+  için ucunu sürükle ya da rakamın üstüne tıklayıp yaz.
+- **Hesaplar** — vadesiz hesap, nakit, kredi kartı, birikim. Her birinin açılış bakiyesi ve
+  işleyen bakiyesi var. Bir kayıt bir hesaba bağlanabilir; bağlanmak zorunda değil.
+- **Yatırımlar** — hisse, fon, altın, döviz, kripto, gayrimenkul. Miktar, maliyet ve en son
+  yazdığın fiyat; kazancı hem para hem yüzde olarak, değer izi ve türe göre pay çubuğuyla.
+  Fiyatlar elle girilir, hiçbir yerden çekilmez: API yoksa anahtar da hesap da yok.
+- **Toplam varlık** — nakit, yatırımlar ve alacağın toplamından borcun düşülmüş hâli.
 - **Tekrarlayan ödemeler** — kira, faturalar, abonelikler. Sabit olarak işaretlenir, günlük
   payın dışında tutulur ve ayrı raporlanır.
 - **Tasarruf hedefleri** — ne kadar, ne zamana, ayda kaça denk geliyor.
 - **Borç ve alacak** — kim kime ne borçlu, ödendi mi. Bütçe hesabına asla karışmaz.
 - **Elle yazılmış SVG grafikler** — pay izi, gün sismografı, hız köşegenine karşı kümülatif
-  eğri ve on iki aylık yoğunluk ızgarası. Grafik kütüphanesi yok, hiçbir yerde pasta grafiği
-  yok: insan gözü sekiz açıyı karşılaştıramaz.
+  eğri, on iki aylık yoğunluk ızgarası, portföy değer izi ve türe göre pay çubuğu. Grafik
+  kütüphanesi yok, hiçbir yerde pasta grafiği yok: insan gözü sekiz açıyı karşılaştıramaz.
+- **Her kategoriye, hesaba ve yatırıma bir renk ve bir simge.**
+- **Telefona kurulabilir** — manifest ve servis çalışanı var; ana ekrana ekleyip uçak
+  modunda da kullanabilirsin.
 - **Türkçe ve İngilizce**, her an değiştirilebilir. Dört para birimi.
-- **Koyu ve açık** — kadran ve kâğıt. Sen seçmedikçe sistemini izler.
+- **Gece ve Şafak**, bir de rengârenk Prizma. Sen seçmedikçe sistemini izler.
 
 ## Verin
 
@@ -81,7 +94,8 @@ git clone https://github.com/onuryildirim26/moon.git
 Sonra `index.html` dosyasına çift tıkla. Kurulum bundan ibaret. Moon bilerek `file://` ile
 çalışacak şekilde yazıldı: klasik script etiketleri, ES module yok, `fetch` yok.
 
-Denemek için `ornek/` klasöründe iki örnek ekstre var: `ornek-ekstre-tr.csv` ve
+Denemek için `ornek/` klasöründe üç örnek ekstre var: `ornek-ekstre-tr.csv`,
+`ornek-ekstre-tr.pdf` (gerçek bir çıktı, PDF okuyucu için) ve
 `sample-statement-en.csv`. Uygulamanın içinde de hazır bir örnek ay var — bir tuşla yüklenir,
 bir tuşla temizlenir.
 
