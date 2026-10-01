@@ -187,23 +187,50 @@
 
   function catId(key) { return "c" + MARK + key; }
 
+  /* The sample ships nine category names a fresh install already has (Kira,
+     Market, Maaş…). Shown plain, every category picker in the app then lists
+     the same word twice with nothing to tell the two apart, and the reader can
+     put their limit on the wrong one — which is the opposite of the strip's
+     promise that the sample does not mix with their own records.
+     The sample keeps its own categories (clear() has to be able to take them
+     back, and borrowing the reader's would park sample spending inside their
+     budget rows), so the name carries the mark instead. The label is interface
+     copy and comes from the catalog; until the key is there the plain name is
+     used rather than printing a key on screen. */
+  var SAMPLE_NAME_KEY = "sample.catName";
+
+  function sampleName(plain) {
+    var i18n = Moon.I18n;
+    if (!i18n || typeof i18n.t !== "function") return plain;
+    if (typeof i18n.has === "function" && !i18n.has(SAMPLE_NAME_KEY)) return plain;
+    var marked = i18n.t(SAMPLE_NAME_KEY, { name: plain });
+    /* t() hands back the key itself when the chain cannot answer it. */
+    return marked && marked !== SAMPLE_NAME_KEY ? marked : plain;
+  }
+
   function dayOfWeek(date) {
     var d = new Date(+date.slice(0, 4), +date.slice(5, 7) - 1, +date.slice(8, 10));
     return d.getDay();
   }
 
-  /* `scale` compresses the authored day indices into however much of the period
-     has actually elapsed, so opening the sample on the 8th spreads the month
-     across eight days instead of stacking two thirds of it onto today. */
-  function pickDate(days, spec, scale) {
+  /* Returns null for an entry the period has not reached yet. Squeezing a whole
+     month into however many days have elapsed was the old behaviour, and on the
+     1st it put all sixty-one entries on one day: one block in the ledger, one
+     point on the trail, and a hero reporting eleven thousand lira spent today.
+     A month that is one third gone should show one third of the month, at the
+     density it was authored with, so the dates stay where they were written. */
+  function pickDate(days, spec) {
     if (!days.length) return null;
     var wanted = spec.day === undefined ? 0 : spec.day;
-    if (scale > 0 && scale < 1) wanted = Math.round(wanted * scale);
-    var fallback = days[util.clamp(wanted, 0, days.length - 1)];
-    if (spec.dow === undefined) return fallback;
+
+    if (spec.dow === undefined) {
+      return wanted < days.length ? days[wanted] : null;
+    }
+
     var hits = days.filter(function (date) { return dayOfWeek(date) === spec.dow; });
-    if (!hits.length) return fallback;
-    return hits[util.clamp(spec.week || 0, 0, hits.length - 1)];
+    if (!hits.length) return null;
+    var week = spec.week || 0;
+    return week < hits.length ? hits[week] : null;
   }
 
   function periodStart(periodKey, offset) {
@@ -246,7 +273,6 @@
       var cut = all.indexOf(today);
       if (cut >= 0) days = all.slice(0, cut + 1);
     }
-    var scale = all.length > 1 ? (days.length - 1) / (all.length - 1) : 1;
 
     var code = lang();
     var fixedByKey = Object.create(null);
@@ -255,7 +281,7 @@
       fixedByKey[cat.key] = cat.fixed;
       out.categories.push({
         id: catId(cat.key),
-        name: cat[code],
+        name: sampleName(cat[code]),
         kind: cat.kind,
         fixed: cat.fixed,
         archived: false,
@@ -274,7 +300,7 @@
 
     var created = stamp();
     ENTRIES.forEach(function (spec, index) {
-      var date = pickDate(days, spec, scale);
+      var date = pickDate(days, spec);
       if (!date) return;
       out.entries.push({
         id: "e" + MARK + util.pad2(index + 1),
@@ -315,7 +341,7 @@
       var contributions = [];
       var saved = 0;
       spec.contributions.forEach(function (c) {
-        var date = pickDate(days, { day: c.day }, scale);
+        var date = pickDate(days, { day: c.day });
         if (!date) return;
         contributions.push({ date: date, amount: c.amount });
         saved += c.amount;
@@ -337,7 +363,7 @@
         person: spec[code],
         amount: spec.amount,
         direction: spec.direction,
-        date: pickDate(days, { day: spec.day }, scale),
+        date: pickDate(days, { day: spec.day }) || days[0],
         dueDate: periodStart(periodKey, spec.dueIn),
         settled: false,
         settledDate: null,
@@ -353,16 +379,47 @@
 
   var BUCKETS = ["categories", "entries", "limits", "recurring", "goals", "debts"];
 
+  function monthStartDay() {
+    var st = store();
+    if (st && st.state && st.state.settings) {
+      var configured = st.state.settings.monthStartDay;
+      if (typeof configured === "number" && configured >= 1 && configured <= 28) return configured;
+    }
+    return 1;
+  }
+
+
+  /* A month of invented spending only reads as a month if there are days to
+     spread it over. Opened on the 1st, the whole set lands on one day: the
+     ledger is a single block, the trail has one point, and the panel reports
+     a day on which the reader spent eleven thousand lira. That is the first
+     screen a visitor sees if they arrive at the start of a month.
+
+     So when the current period is still young, the sample is written into the
+     previous one, which is complete and reads the way a month should. It is
+     declared sample data either way; showing last month is honest, and a
+     demo that looks broken teaches nothing. */
+  var MIN_DAYS_ELAPSED = 8;
+
   function currentPeriod() {
     var d = dates();
     if (!d || !d.today || !d.periodKey) return null;
-    var st = store();
-    var msd = 1;
-    if (st && st.state && st.state.settings) {
-      var configured = st.state.settings.monthStartDay;
-      if (typeof configured === "number" && configured >= 1 && configured <= 28) msd = configured;
-    }
-    return d.periodKey(d.today(), msd);
+    return d.periodKey(d.today(), monthStartDay());
+  }
+
+  function samplePeriod() {
+    var d = dates();
+    if (!d || !d.today || !d.periodKey) return null;
+
+    var msd = monthStartDay();
+    var key = d.periodKey(d.today(), msd);
+    if (!key) return null;
+
+    if (typeof d.periodProgress !== "function" || typeof d.shiftPeriod !== "function") return key;
+    var progress = d.periodProgress(key, msd, d.today());
+    if (!progress || progress.dayIndex >= MIN_DAYS_ELAPSED) return key;
+
+    return d.shiftPeriod(key, -1) || key;
   }
 
   function isOn() {
@@ -380,11 +437,25 @@
     if (!st || !st.update) return 0;
     if (isOn()) return 0;
 
-    var periodKey = currentPeriod();
+    var periodKey = samplePeriod();
     if (!periodKey) return 0;
 
     var data = build(periodKey);
     if (!data.entries.length) return 0;
+
+    /* When the sample went to last month because this one is only a few days
+       old, those few days should not be empty: stepping the period forward has
+       to show a running month, not a blank one. Only the entries are taken —
+       the categories, limits, goals and debts already came from the first
+       build, and reusing their ids would collide. */
+    var running = currentPeriod();
+    if (running && running !== periodKey) {
+      var spill = build(running);
+      spill.entries.forEach(function (entry, i) {
+        entry.id = "e" + MARK + "r" + util.pad2(i + 1);
+        data.entries.push(entry);
+      });
+    }
 
     st.update(function (draft) {
       BUCKETS.forEach(function (name) {
@@ -395,6 +466,16 @@
       draft.settings.sampleOn = true;
     }, { reason: "sample:apply", immediate: true });
 
+    /* The sample may have been written into last month (see samplePeriod), and
+       a reader who turns it on and lands on an empty current month learns the
+       wrong thing about the app. Walk the period selector to the month the
+       data is in. Guarded: App boots after this file and may not be there. */
+    if (Moon.App && typeof Moon.App.setPeriod === "function") {
+      try {
+        Moon.App.setPeriod(periodKey);
+      } catch (error) { /* a router that cannot move is not worth a failed import */ }
+    }
+
     return data.entries.length;
   }
 
@@ -404,6 +485,18 @@
 
     var removed = 0;
     st.update(function (draft) {
+      /* Which categories are about to go. Everything the sample planted is
+         removed, but a record the reader filed under one of them is theirs and
+         stays — and a record that stays needs a category that stays, or it
+         drops out of the ledger filter, out of every budget row, and out of
+         reach of the category list. Model applies the same rule removeCategory
+         applies; the records are handed over so an inherited fixed/variable
+         flag can follow the move. */
+      var gone = Object.create(null);
+      (Array.isArray(draft.categories) ? draft.categories : []).forEach(function (row) {
+        if (isSampleRecord(row)) gone[row.id] = row;
+      });
+
       BUCKETS.forEach(function (name) {
         var rows = draft[name];
         if (!Array.isArray(rows)) return;
@@ -414,6 +507,9 @@
           }
         }
       });
+
+      if (Moon.Model && Moon.Model.rehomeOrphans) Moon.Model.rehomeOrphans(draft, gone);
+
       if (!draft.settings) draft.settings = {};
       draft.settings.sampleOn = false;
     }, { reason: "sample:clear", immediate: true });
@@ -421,10 +517,100 @@
     return removed;
   }
 
+  /* ---------------------------------------------------------------- selftest
+   * Console-only: Moon.Sample._selftest(). Reads build() and the name marking
+   * and nothing else — apply() and clear() write to the live store, so they are
+   * deliberately out of reach of a test a reader might run on their own data.
+   */
+  function selftest() {
+    var failed = [];
+    var passed = 0;
+
+    function ok(label, condition) {
+      if (condition) passed += 1;
+      else failed.push(label);
+    }
+
+    var d = dates();
+    if (!d || !d.today || !d.periodKey) {
+      return { passed: 0, failed: ["Moon.Dates missing"] };
+    }
+
+    var periodKey = d.periodKey(d.today(), 1);
+    var data = build(periodKey);
+
+    ok("builds entries", data.entries.length > 0);
+    ok("builds categories", data.categories.length === CATEGORIES.length);
+    ok("every category is a sample record", data.categories.every(function (c) {
+      return c.source === "sample" && c.id.indexOf("c" + MARK) === 0;
+    }));
+
+    /* Every record points at a category this same build produced: nothing in
+       the sample may lean on a category the reader happens to own. */
+    var own = Object.create(null);
+    data.categories.forEach(function (c) { own[c.id] = true; });
+    ok("entries stay inside the sample", data.entries.every(function (e) { return own[e.categoryId]; }));
+    ok("limits stay inside the sample", data.limits.every(function (l) { return own[l.categoryId]; }));
+    ok("rules stay inside the sample", data.recurring.every(function (r) { return own[r.categoryId]; }));
+
+    /* One limit per category: two rows for one category is the shape
+       periodSummary and budgetRows read differently. */
+    var seen = Object.create(null);
+    ok("one limit per category", data.limits.every(function (l) {
+      if (seen[l.categoryId]) return false;
+      seen[l.categoryId] = true;
+      return true;
+    }));
+
+    /* The reader's own category names must not come back a second time with
+       nothing to tell the two apart (see sampleName). */
+    var live = Object.create(null);
+    var st = store();
+    (st && st.state && Array.isArray(st.state.categories) ? st.state.categories : [])
+      .forEach(function (row) {
+        if (row && row.source !== "sample" && String(row.id || "").indexOf(MARK) !== 1) {
+          live[util.searchKey(row.name)] = true;
+        }
+      });
+    var collisions = data.categories.filter(function (c) {
+      return live[util.searchKey(c.name)];
+    });
+    var marked = Moon.I18n && typeof Moon.I18n.has === "function" && Moon.I18n.has(SAMPLE_NAME_KEY);
+    if (marked) {
+      ok("marked names collide with nothing", collisions.length === 0);
+      ok("the mark is actually applied", data.categories.every(function (c) {
+        return CATEGORIES.every(function (spec) { return spec.tr !== c.name && spec.en !== c.name; });
+      }));
+    } else {
+      /* Without the catalog key the plain name is used on purpose — a key
+         printed on screen would be worse than a repeated word. The collisions
+         come back as soon as the key lands, which is what the branch above
+         then guards. */
+      ok("falls back to the plain name", data.categories.every(function (c) {
+        return CATEGORIES.some(function (spec) { return spec.tr === c.name || spec.en === c.name; });
+      }));
+      if (global.console) {
+        global.console.log("Moon.Sample selftest: '" + SAMPLE_NAME_KEY + "' is not in the " +
+          "catalog yet, so sample categories still show plain names (" +
+          collisions.length + " of them match one of the reader's).");
+      }
+    }
+
+    /* build() reads the store and writes nothing. */
+    var before = st && st.state && Array.isArray(st.state.categories) ? st.state.categories.length : 0;
+    build(periodKey);
+    ok("build writes nothing",
+      (st && st.state && Array.isArray(st.state.categories) ? st.state.categories.length : 0) === before);
+
+    return { passed: passed, failed: failed };
+  }
+
   Moon.Sample = {
     build: build,
     apply: apply,
     clear: clear,
-    isOn: isOn
+    isOn: isOn,
+    period: samplePeriod,
+    _selftest: selftest
   };
 })(window);

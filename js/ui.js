@@ -340,7 +340,12 @@
   function button(spec, api) {
     spec = spec || {};
     var classes = ["btn"];
-    if (spec.kind) classes.push("btn--" + spec.kind);
+    /* moon.css names a button variant .btn.is-<kind> — is-primary, is-danger,
+       is-quiet, is-row. A BEM twin here would make every variant silently fall
+       back to the plain frame, so this builder speaks the stylesheet's own
+       vocabulary. "ghost" deliberately has no rule: the bare .btn frame IS the
+       look a cancel button next to a primary wants. */
+    if (spec.kind) classes.push("is-" + spec.kind);
     if (spec["class"]) classes.push(spec["class"]);
 
     var label = pick(spec, "label");
@@ -388,9 +393,11 @@
     var id = spec.id || util.id("sec");
     var titleId = id + "-title";
 
+    /* The rule between the title and the aside is .section__head::after in
+       moon.css — a pseudo-element, so no filler span belongs here. An empty
+       one would still take a flex gap and push the rule off the title. */
     var head = dom.el("div", { "class": "section__head" }, [
-      dom.el("h2", { "class": "section__title", id: titleId }, pick(spec, "title")),
-      dom.el("span", { "class": "section__rule", "aria-hidden": "true" })
+      dom.el("h2", { "class": "section__title", id: titleId }, pick(spec, "title"))
     ]);
 
     var aside = spec.aside !== undefined && spec.aside !== null ? spec.aside : spec.asideKey;
@@ -448,9 +455,15 @@
       else if (opts.sign === true && value > 0) sign = "+";
     }
 
+    var symbol = opts.currency ? (parts.symbol || symbolFor(opts.currency)) : "";
+
     var classes = ["money"];
     if (opts.dim) classes.push("is-dim");
     if (opts.strong) classes.push("is-strong");
+    /* English puts the symbol in front of the digits. DOM order alone cannot
+       say so: the grid places every part by column, so the layout needs the
+       class moon.css keys that column off. */
+    if (symbol && parts.symbolFirst) classes.push("is-sym-first");
     if (opts["class"]) classes.push(opts["class"]);
 
     var cell = dom.el("span", {
@@ -460,7 +473,6 @@
 
     if (sign) cell.appendChild(dom.el("span", { "class": "m-sign" }, sign));
 
-    var symbol = opts.currency ? (parts.symbol || symbolFor(opts.currency)) : "";
     if (symbol && parts.symbolFirst) {
       cell.appendChild(dom.el("span", { "class": "m-sym" }, symbol));
     }
@@ -484,7 +496,8 @@
   function mark(kind) {
     var spec = MARKS[kind];
     if (!spec) return null;
-    return dom.el("span", { "class": "mark mark--" + kind }, [
+    /* .mark.is-over and .mark.is-unconfirmed are what moon.css colours. */
+    return dom.el("span", { "class": "mark is-" + kind }, [
       dom.el("span", { "aria-hidden": "true" }, spec.glyph),
       dom.el("span", { "class": "sr" }, t(spec.key))
     ]);
@@ -835,7 +848,7 @@
           }
           if (entry.type === "date") {
             var text = String(entry.control.value || "").trim();
-            if (text && entry.read() === null) out[entry.name] = "err.dateInvalid";
+            if (text && entry.read() === null) out[entry.name] = "err.badDate";
           }
         });
         return out;
@@ -907,6 +920,88 @@
   }
 
   /* --------------------------------------------------------------- dialog */
+
+  /* Only used to build a selector, so anything exotic is simply not trusted. */
+  var SAFE_TOKEN = /^[A-Za-z][A-Za-z0-9_-]*$/;
+
+  /* Contract §11 hands focus back to the element that opened a dialog. Holding
+     a reference to that element is not enough: saving or deleting a record
+     re-renders the whole view, so by the time the dialog closes the opener has
+     been replaced by an equal-looking node (an edit) or is gone for good (a
+     delete). Remember three ways to find where the reader was — the id, the
+     data-id the ledger stamps on a row, and the row's place in the list. */
+  function openerMemo() {
+    var node = doc.activeElement;
+    if (!node || node === doc.body || node === doc.documentElement) return null;
+
+    var memo = { node: node, selector: null, rowIndex: -1 };
+    if (node.id && SAFE_TOKEN.test(node.id)) memo.selector = "#" + node.id;
+    var dataId = typeof node.getAttribute === "function" ? node.getAttribute("data-id") : null;
+    if (!memo.selector && dataId && SAFE_TOKEN.test(dataId)) {
+      memo.selector = '[data-id="' + dataId + '"]';
+    }
+    var row = typeof node.closest === "function" ? node.closest("[data-row]") : null;
+    if (row) memo.rowIndex = dom.qsa("[data-row]").indexOf(row);
+    return memo;
+  }
+
+  /* "exact" when the reader is back where they were, "fallback" when only the
+     content root was left to put them on, false when nothing took focus. */
+  function restoreFocus(memo, spec) {
+    /* A view that knows better says so: a node, or true to take over. */
+    if (spec && typeof spec.restoreFocus === "function") {
+      var asked = call(spec.restoreFocus);
+      if (asked === true) return "exact";
+      if (isNode(asked) && focusNode(asked)) return "exact";
+    }
+    if (memo) {
+      if (memo.node && doc.contains(memo.node) && focusNode(memo.node)) return "exact";
+      if (memo.selector) {
+        var again = dom.qs(memo.selector);
+        if (again && focusNode(again)) return "exact";
+      }
+      /* The row was deleted. Its neighbour is where the reader was looking,
+         and the undo offer is one Tab away from there. */
+      if (memo.rowIndex >= 0) {
+        var rows = dom.qsa("[data-row]");
+        if (rows.length && focusNode(rows[util.clamp(memo.rowIndex, 0, rows.length - 1)])) return "exact";
+      }
+    }
+    /* Last resort: the top of the content. Never <body>. */
+    var main = doc.getElementById("view");
+    return main && focusNode(main) ? "fallback" : false;
+  }
+
+  /* How long after a dialog closes a re-render still counts as that dialog's
+     doing. The router redraws on the next frame, well inside this. */
+  var FOCUS_SETTLE_MS = 1000;
+
+  /* The restore above runs while the view is still the old one. Saving or
+     deleting then redraws #view a frame later and drops focus on <body>, so
+     the restore has to be repeated once the new DOM is in place — and only
+     while focus is still loose, never over a view that placed it itself. */
+  function settleFocus(memo, spec) {
+    var placed = restoreFocus(memo, spec);
+    if (typeof global.setTimeout !== "function") return placed;
+
+    var host = doc.getElementById("view");
+    var Observer = global.MutationObserver;
+
+    function attempt() {
+      var at = doc.activeElement;
+      var loose = !at || at === doc.body || at === doc.documentElement ||
+        (placed === "fallback" && at === host);
+      if (loose) placed = restoreFocus(memo, spec);
+    }
+
+    global.setTimeout(attempt, 0);
+    if (!host || typeof Observer !== "function") return placed;
+
+    var observer = new Observer(attempt);
+    observer.observe(host, { childList: true, subtree: true });
+    global.setTimeout(function () { observer.disconnect(); }, FOCUS_SETTLE_MS);
+    return placed;
+  }
 
   function dialog(spec) {
     spec = spec || {};
@@ -989,7 +1084,7 @@
 
     api.open = function () {
       if (opened) return api;
-      opener = doc.activeElement && doc.activeElement !== doc.body ? doc.activeElement : null;
+      opener = openerMemo();
       if (!element.parentNode) doc.body.appendChild(element);
       opened = true;
 
@@ -1024,8 +1119,9 @@
 
       /* Focus goes back to whatever opened the dialog. Without this, keyboard
          readers land at the top of the document after every save. */
-      if (opener && doc.contains(opener)) focusNode(opener);
+      var memo = opener;
       opener = null;
+      settleFocus(memo, spec);
       call(spec.onClose);
     }
 
@@ -1134,7 +1230,7 @@
     var count = dom.el("span", {
       "class": "undo__count tnum",
       "aria-hidden": "true",
-      text: t("common.secondsLeft", { count: left })
+      text: t("common.undoSeconds", { seconds: left })
     });
     var bar = dom.el("span", {
       "class": "undo__bar",
@@ -1154,7 +1250,7 @@
     });
 
     var dismiss = button({
-      labelKey: spec.dismissKey || "common.dismiss",
+      labelKey: spec.dismissKey || "common.close",
       kind: "quiet",
       "class": "undo__dismiss",
       onClick: function () {
@@ -1183,7 +1279,7 @@
         call(spec.onExpire);
         return;
       }
-      count.textContent = t("common.secondsLeft", { count: left });
+      count.textContent = t("common.undoSeconds", { seconds: left });
       bar.style.width = (left / total) * 100 + "%";
     }, 1000);
   }
@@ -1210,8 +1306,9 @@
     spec = spec || {};
     var kind = spec.kind === "warn" || spec.kind === "error" || spec.kind === "sample" ? spec.kind : "info";
 
+    /* .notice.is-<kind> is the hook moon.css colours the left rule with. */
     var node = dom.el("div", {
-      "class": "notice notice--" + kind + (spec["class"] ? " " + spec["class"] : ""),
+      "class": "notice is-" + kind + (spec["class"] ? " " + spec["class"] : ""),
       dataset: { kind: kind }
     });
 
@@ -1233,7 +1330,7 @@
 
     if (spec.dismissible && kind !== "sample") {
       node.appendChild(button({
-        labelKey: spec.dismissKey || "common.dismiss",
+        labelKey: spec.dismissKey || "common.close",
         kind: "quiet",
         "class": "notice__close",
         onClick: api.close
@@ -1253,18 +1350,25 @@
     var block = dom.el("div", { "class": "empty__ghost", "aria-hidden": "true" });
     var count = Math.max(1, columns || 3);
 
-    function cells(extra) {
+    /* The column count is data, so the grid that draws the hairlines between
+       the columns has to be told it. A custom property is the only channel a
+       stylesheet can read a number through. */
+    if (block.style && typeof block.style.setProperty === "function") {
+      block.style.setProperty("--ghost-cols", String(count));
+    }
+
+    function cells() {
       var out = [];
       for (var c = 0; c < count; c += 1) {
-        out.push(dom.el("span", { "class": "ghost__cell" + (extra ? " " + extra : "") }));
+        out.push(dom.el("span", { "class": "ghost__cell" }));
       }
       return out;
     }
 
-    block.appendChild(dom.el("div", { "class": "ghost__head" }, cells("ghost__cell--head")));
+    block.appendChild(dom.el("div", { "class": "ghost__head" }, cells()));
     var total = Math.max(1, rows || 3);
     for (var r = 0; r < total; r += 1) {
-      block.appendChild(dom.el("div", { "class": "ghost__row" }, cells(null)));
+      block.appendChild(dom.el("div", { "class": "ghost__row" }, cells()));
     }
     return block;
   }
@@ -1302,7 +1406,10 @@
         var hintText = pick(action, "hint");
         if (hintText) inner.push(dom.el("span", { "class": "empty__action-hint", text: hintText }));
 
-        var attrs = { "class": "empty__action" };
+        /* A full-width row, not a button in a row of buttons: .btn.is-row is
+           the rule moon.css already carries for exactly this shape, so the
+           control wears it rather than arriving unstyled. */
+        var attrs = { "class": "btn is-row empty__action" };
         var control;
         if (action.href) {
           attrs.href = action.href;
@@ -1381,7 +1488,10 @@
     var cols = (columns || []).filter(Boolean);
     var list = rows || [];
 
-    var details = dom.el("details", { "class": "datatable" });
+    /* .numbers and .table are the names moon.css styles a "show the numbers"
+       block with; .datatable* stays as the structural hook bindPrint() and the
+       views query by. */
+    var details = dom.el("details", { "class": "datatable numbers" });
     if (opts.open) details.open = true;
 
     var summaryText = pick(opts, "summary") || t("common.showNumbers");
@@ -1429,7 +1539,7 @@
       body.appendChild(tr);
     });
 
-    var table = dom.el("table", { "class": "datatable__table" });
+    var table = dom.el("table", { "class": "datatable__table table" });
     var captionText = pick(opts, "caption");
     if (captionText) table.appendChild(dom.el("caption", { "class": "datatable__caption" }, captionText));
     table.appendChild(dom.el("thead", null, headRow));
@@ -1646,9 +1756,123 @@
     return api;
   }
 
+  /* -------------------------------------------------------------- selftest */
+
+  /* Console-only: Moon.UI._selftest(). Never called in production.
+   *
+   * It checks one thing above all: that the class names this file writes are
+   * the class names moon.css styles. A BEM twin (btn--danger beside
+   * .btn.is-danger) costs nothing at load time and silently strips a
+   * destructive button of its colour, so the vocabulary is pinned here rather
+   * than left to the eye. Needs no layout — only the attributes dom.el sets. */
+  function selftest() {
+    var failed = [];
+    var passed = 0;
+
+    function check(name, condition) {
+      if (condition) passed += 1;
+      else failed.push(name);
+    }
+
+    function cls(node) {
+      if (!node || typeof node.getAttribute !== "function") return "";
+      return node.getAttribute("class") || "";
+    }
+
+    function kids(node) {
+      return node && node.children ? Array.prototype.slice.call(node.children) : [];
+    }
+
+    function deep(node, name, out) {
+      out = out || [];
+      kids(node).forEach(function (child) {
+        if ((" " + cls(child) + " ").indexOf(" " + name + " ") !== -1) out.push(child);
+        deep(child, name, out);
+      });
+      return out;
+    }
+
+    /* --- buttons: moon.css knows .btn.is-<kind>, nothing else ----------- */
+    check("button primary", cls(button({ kind: "primary", label: "x" })) === "btn is-primary");
+    check("button danger", cls(button({ kind: "danger", label: "x" })) === "btn is-danger");
+    check("button quiet", cls(button({ kind: "quiet", label: "x" })) === "btn is-quiet");
+    check("button plain", cls(button({ label: "x" })) === "btn");
+    check("button no BEM twin", cls(button({ kind: "danger", label: "x" })).indexOf("btn--") === -1);
+
+    /* --- bands and margin marks: same rule ------------------------------ */
+    check("notice warn", cls(notice({ kind: "warn", message: "x" })) === "notice is-warn");
+    check("notice unknown kind falls back to info", cls(notice({ kind: "nope", message: "x" })) === "notice is-info");
+    check("mark over", cls(mark("over")) === "mark is-over");
+    check("mark unknown", mark("nope") === null);
+
+    /* --- moneyCell: the grid is built on these direct children ---------- */
+    var plain = moneyCell(-8000, {});
+    check("money classes", cls(plain) === "money");
+    check("money parts", kids(plain).map(cls).join(",") === "m-sign,m-whole,m-sep,m-cents");
+
+    var symbolFirst = moneyCell(123456, { currency: "USD", lang: "en" });
+    var symbolNames = kids(symbolFirst).map(cls);
+    if (symbolNames.indexOf("m-sym") < symbolNames.indexOf("m-whole")) {
+      /* EN layout: the symbol leads, so the cell has to say so or the grid
+         puts it after the cents whatever the DOM order is. */
+      check("money is-sym-first", cls(symbolFirst).indexOf("is-sym-first") !== -1);
+    } else {
+      check("money trailing symbol unflagged", cls(symbolFirst).indexOf("is-sym-first") === -1);
+    }
+
+    var unsigned = moneyCell(-8000, { sign: false });
+    check("money sign:false", kids(unsigned).map(cls).join(",") === "m-whole,m-sep,m-cents");
+
+    /* --- the ghost of an empty ledger page (G9) ------------------------- */
+    var empty = emptyState({
+      ghost: true,
+      columns: 4,
+      heading: "h",
+      actions: [{ label: "a" }, { label: "b" }]
+    });
+    var block = kids(empty)[0];
+    check("ghost block", cls(block) === "empty__ghost");
+    check("ghost head", deep(block, "ghost__head").length === 1);
+    check("ghost rows", deep(block, "ghost__row").length === 3);
+    check("ghost cells", deep(block, "ghost__cell").length === 16);
+    check("ghost has no dead modifier", deep(block, "ghost__cell--head").length === 0);
+
+    var actions = deep(empty, "empty__action");
+    check("empty actions built", actions.length === 2);
+    check("empty action wears .btn.is-row", actions.length > 0 && cls(actions[0]) === "btn is-row empty__action");
+    check("empty heading", deep(empty, "empty__heading").length === 1);
+
+    /* --- the section rule is a pseudo-element, not a filler span -------- */
+    var sec = section({ title: "t" });
+    var head = kids(sec)[0];
+    check("section head", cls(head) === "section__head");
+    check("section head has title only", kids(head).length === 1 && cls(kids(head)[0]) === "section__title");
+    check("section aside", kids(kids(section({ title: "t", aside: "a" }))[0]).length === 2);
+
+    /* --- "show the numbers": moon.css styles .numbers and .table -------- */
+    var table = dataTable([{ label: "a" }, { label: "b", type: "money" }], [["x", 100]], {});
+    check("dataTable wears .numbers", (" " + cls(table) + " ").indexOf(" numbers ") !== -1);
+    check("dataTable table wears .table", deep(table, "table").length === 1);
+
+    /* --- every key this file names must exist in the catalogue ---------- */
+    var I18n = Moon.I18n;
+    if (I18n && typeof I18n.has === "function") {
+      [
+        "common.close", "common.undo", "common.undoSeconds", "common.confirm",
+        "common.cancel", "common.showNumbers", "err.badDate", "form.dateHint",
+        "a11y.markOver", "a11y.markRecurring", "a11y.markUnconfirmed", "money.invalid"
+      ].forEach(function (key) {
+        check("key " + key, I18n.has(key));
+      });
+    }
+
+    return { passed: passed, failed: failed };
+  }
+
   /* ---------------------------------------------------------------- export */
 
   Moon.UI = {
+    _selftest: selftest,
     section: section,
     hero: hero,
     moneyCell: moneyCell,

@@ -6,7 +6,15 @@
 <title>Moon — bütçe defteri</title>
 <meta name="description" content="Sunucusuz bütçe defteri. Harcamalarını yaz ya da banka ekstreni yükle; veri tarayıcında kalır, istediğin an JSON olarak indirirsin. / A serverless budget ledger: your data never leaves your browser.">
 <meta name="color-scheme" content="dark light">
-<meta name="theme-color" content="#0e1418">
+
+<!-- One bar colour per surface, so the phone's address bar matches the page
+     before a single script runs. Both values mirror --bg in css/tokens.css;
+     change them together. While the reader is on "system" these two media
+     queries are the whole story. A pinned theme contradicts the system, so
+     app.js retargets the `media` of these two tags (it never rewrites the
+     colours) — the dark one stays first for engines that ignore `media`. -->
+<meta name="theme-color" data-surface="dial" media="(prefers-color-scheme: dark)" content="#0e1418">
+<meta name="theme-color" data-surface="paper" media="(prefers-color-scheme: light)" content="#e8ecef">
 
 <!-- Share cards are built by crawlers that do not resolve relative paths, so
      these two carry the published address. Change them if you fork this. -->

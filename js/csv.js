@@ -420,6 +420,7 @@
       else unsplit += 1;
     });
     if (!counts.length) return null;
+    if (splitsNumbersOnly(probe.records, delimiter)) return null;
 
     var freq = {};
     var modeCount = 0;
@@ -449,6 +450,40 @@
       coverage: coverage,
       columns: modeCount
     };
+  }
+
+  /* A decimal comma is not a delimiter. In a one-column list of amounts
+     ("-10,00") the comma cuts every record into digits and nothing else; the
+     scorer above would call that a consistent two-column table, and then
+     findHeaderRow would promote the first amount to a header row. So a
+     candidate that only ever halves a number is rejected and the file stays
+     one column wide, which is the honest answer. Letters anywhere in a piece,
+     a third field, or a right side that is not 1-3 digits all mean the
+     candidate really is splitting columns, and it keeps its vote. */
+  var DECIMAL_DELIMITERS = { ",": 1, ".": 1 };
+
+  /* The digits of one money-shaped piece, or null: "(19" -> "19",
+     "1.234" -> "1234", "-10" -> "10", "90)" -> "90". Anything else — a letter,
+     a second delimiter, an empty cell — is not a halved number. */
+  function numberPiece(text) {
+    var match = /^[\s(+\-−₺$€£]*(\d+(?:[.\s'’]\d+)*)[\s)%]*$/.exec(String(text));
+    return match ? match[1].replace(/[.\s'’]/g, "") : null;
+  }
+
+  function splitsNumbersOnly(records, delimiter) {
+    if (!DECIMAL_DELIMITERS[delimiter]) return false;
+    var split = 0;
+    for (var i = 0; i < records.length; i += 1) {
+      var record = records[i];
+      if (isBlankRecord(record) || record.length < 2) continue;
+      if (record.length > 2) return false;
+      /* "01.09.2026,5" is a date and a column, not one cut number. */
+      if (looksLikeDate(record[0]) || looksLikeDate(record[1])) return false;
+      var cents = numberPiece(record[1]);
+      if (!numberPiece(record[0]) || !cents || cents.length > 3) return false;
+      split += 1;
+    }
+    return split > 0;
   }
 
   function findHeaderRow(records, startAt) {
@@ -867,7 +902,23 @@
     check("decimal currency noise", detectDecimal(["₺1.234,56", "1.999,00 TL", "(19,90)"]), ",");
     check("decimal empty", detectDecimal([]), null);
 
-    /* 19 — row ceiling is a hard, named error. */
+    /* 19 — one column of amounts: the decimal comma is not a delimiter. */
+    var single = "Tutar\n-10,00\n-20,00\n-30,00\n";
+    var singleSniff = sniff(single);
+    check("single columnCount", singleSniff.columnCount, 1);
+    check("single confidence", singleSniff.confidence, 0);
+    check("single headerRow", singleSniff.headerRow, 0);
+    var singleParsed = parse(single, { delimiter: singleSniff.delimiter, headerRow: singleSniff.headerRow });
+    check("single headers", singleParsed.headers, ["Tutar"]);
+    check("single rows", singleParsed.rows, [["-10,00"], ["-20,00"], ["-30,00"]]);
+    var paren = sniff("Tutar\n(19,90)\n(5,00)\n1.234,56\n");
+    check("single paren columnCount", paren.columnCount, 1);
+    /* …but a real comma file is still a comma file, header or not. */
+    check("comma table survives", sniff("Date,Amount\n2026-01-01,5.00\n2026-01-02,6.00\n").delimiter, ",");
+    check("comma table columns", sniff("Date,Amount\n2026-01-01,5.00\n2026-01-02,6.00\n").columnCount, 2);
+    check("numeric table survives", sniff("1,2,3\n4,5,6\n7,8,9\n").delimiter, ",");
+
+    /* 20 — row ceiling is a hard, named error. */
     var many = "a;b\n";
     var chunk = [];
     for (var r = 0; r < MAX_ROWS + 2; r += 1) chunk.push("1;2");
@@ -880,7 +931,7 @@
     }
     check("tooManyRows", rowError, "csv.tooManyRows");
 
-    /* 20 — byte ceiling is a hard, named error. */
+    /* 21 — byte ceiling is a hard, named error. */
     var sizeError = null;
     try {
       decode(new Uint8Array(MAX_BYTES + 1));

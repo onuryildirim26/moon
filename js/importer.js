@@ -77,6 +77,39 @@
       .toLowerCase().replace(/[^a-z0-9]+/g, "");
   }
 
+  /* Matching a Kategori cell against a category name has to fold diacritics:
+     bank exports write "Maas" and "Ulasim" where the catalog says "Maaş" and
+     "Ulaşım", and util.searchKey keeps the diacritics (it also builds the
+     duplicate fingerprint, which must stay strict, so it cannot be loosened).
+     Both sides go through the same CSV fold the header dictionary uses.
+     searchKey stays the fallback for a name the ASCII fold would empty, e.g.
+     a category written in a non-Latin script. */
+  function categoryKey(value) {
+    var folded = fold(value);
+    if (folded) return folded;
+    if (Moon.util && typeof Moon.util.searchKey === "function") return Moon.util.searchKey(value);
+    return String(value === null || value === undefined ? "" : value).toLowerCase();
+  }
+
+  /* A statement whose amount column carries no sign puts the direction in a
+     words column ("İşlem Türü": Gelir / Gider). The header dictionary maps
+     such a column to `category` — the only role the contract has for a words
+     column — so the word arrives in build as a category cell that matches no
+     category. Reading it there is what keeps a rent payment from being written
+     as income: with signRule "negativeIsExpense" every unsigned row would
+     otherwise be "in". The amount's own sign always wins; a cell that does
+     name a real category stays a category, and then that category's kind is
+     the direction evidence instead. */
+  var DIRECTION_WORDS = {
+    gider: "out", borc: "out", cikan: "out", cikis: "out", harcama: "out",
+    odeme: "out", odenen: "out", cekilen: "out", debit: "out", dr: "out",
+    withdrawal: "out", withdrawals: "out", payment: "out", expense: "out",
+    out: "out", outflow: "out", paidout: "out", moneyout: "out",
+    gelir: "in", alacak: "in", giren: "in", giris: "in", yatan: "in",
+    tahsil: "in", tahsilat: "in", credit: "in", cr: "in", deposit: "in",
+    income: "in", "in": "in", inflow: "in", paidin: "in", moneyin: "in"
+  };
+
   function cell(row, index) {
     if (!row || index === null || index === undefined || index < 0) return "";
     var value = row[index];
@@ -236,15 +269,26 @@
         if (order === "dmy" || order === "mdy") return order;
       } catch (e) { /* fall through to the local read */ }
     }
+    var separators = {};
     for (var i = 0; i < samples.length; i += 1) {
-      var match = /^\s*(\d{1,4})[.\/\-](\d{1,2})[.\/\-](\d{1,4})/.exec(samples[i]);
+      var match = /^\s*(\d{1,4})([.\/\-])(\d{1,2})[.\/\-](\d{1,4})/.exec(samples[i]);
       if (!match) continue;
       if (Number(match[1]) > 31) return "dmy";          /* ISO: order is moot */
       if (Number(match[1]) > 12) return "dmy";
-      if (Number(match[2]) > 12) return "mdy";
+      if (Number(match[3]) > 12) return "mdy";
+      separators[match[2]] = true;
     }
-    /* Undecidable. A comma-separated file is usually a US export. */
-    return opts && opts.delimiter === "," ? "mdy" : "dmy";
+    /* Undecidable from the numbers. The decision then comes from the date
+       column itself, not from the file's field delimiter: a dot-separated date
+       ("01.09.2026") is European notation and never a US export, so reading it
+       as MDY turns 1 September into 9 January. Only a slash-written column
+       leaves MDY on the table, and there only for a comma-separated file —
+       the wizard still shows csv.err.ambiguousDate and the order selector,
+       because Moon.Dates.guessOrder found no evidence either way. */
+    if (separators["/"] && !separators["."] && !separators["-"]) {
+      return opts && opts.delimiter === "," ? "mdy" : "dmy";
+    }
+    return "dmy";
   }
 
   /* ------------------------------------------------------------- roles --- */
@@ -443,8 +487,7 @@
       if (!category || !category.id) return;
       index.fixed[category.id] = !!category.fixed;
       index.kind[category.id] = category.kind || "expense";
-      var key = Moon.util && typeof Moon.util.searchKey === "function"
-        ? Moon.util.searchKey(category.name || "") : String(category.name || "").toLowerCase();
+      var key = categoryKey(category.name || "");
       if (key && !index.byName[key]) index.byName[key] = category.id;
     });
     return index;
@@ -542,6 +585,21 @@
       var minor = 0;
       var amountText = "";
 
+      /* Resolved before the amount, because an unsigned amount asks this
+         column which way the money went. */
+      var categoryLabel = mapping.category === null || mapping.category === undefined
+        ? "" : categoryKey(cell(row, mapping.category));
+      var namedCategory = categoryLabel && categories.byName[categoryLabel]
+        ? categories.byName[categoryLabel] : null;
+      var columnDirection = null;
+      if (namedCategory) {
+        /* The named category's own kind is direction evidence too: a row filed
+           under Market is money going out even when the cell carries no sign. */
+        columnDirection = categories.kind[namedCategory] === "income" ? "in" : "out";
+      } else if (categoryLabel && DIRECTION_WORDS[categoryLabel]) {
+        columnDirection = DIRECTION_WORDS[categoryLabel];
+      }
+
       if (mapping.signRule === "debitCredit") {
         var debitRead = readAmount(cell(row, mapping.debit), decimal);
         var creditRead = readAmount(cell(row, mapping.credit), decimal);
@@ -582,7 +640,7 @@
           out.rejected.push({ line: line, reason: "zeroAmount", value: tidy(amountText).slice(0, 40) });
           continue;
         }
-        direction = read.negative ? "out" : "in";
+        direction = read.negative ? "out" : (columnDirection || "in");
         minor = read.minor;
       }
 
@@ -593,12 +651,7 @@
 
       var note = tidy(cell(row, mapping.note)).slice(0, NOTE_MAX);
 
-      var categoryId = null;
-      if (mapping.category !== null && mapping.category !== undefined) {
-        var label = Moon.util && typeof Moon.util.searchKey === "function"
-          ? Moon.util.searchKey(cell(row, mapping.category)) : "";
-        if (label && categories.byName[label]) categoryId = categories.byName[label];
-      }
+      var categoryId = namedCategory;
       if (!categoryId && defaultId) categoryId = defaultId;
       /* Model.validateEntry requires direction and category kind to agree, so a
          mismatched default is dropped rather than written into an invalid draft. */
@@ -783,6 +836,88 @@
     var multiRoles = guessRoles(multi.headers, multi.rows, { delimiter: ";" });
     var multiBuilt = build(multi, multiRoles, {});
     check("multiline note tidied", multiBuilt.drafts[0].note, "iki satır");
+
+    /* 9 — a dot-written date column is day-first whatever the field delimiter
+       is: "01.09.2026" in a comma file used to arrive as 9 January. */
+    var dotted = table("Date,Description,Amount\n01.09.2026,A,-5.00\n02.09.2026,B,-6.00\n"
+      + "03.09.2026,C,-7.00\n04.09.2026,D,-8.00\n");
+    var dottedRoles = guessRoles(dotted.headers, dotted.rows, { delimiter: "," });
+    check("dotted dateOrder", dottedRoles.dateOrder, "dmy");
+    var dottedBuilt = build(dotted, dottedRoles, { monthStartDay: 1 });
+    check("dotted dates", dottedBuilt.drafts.map(function (d) { return d.date; }),
+      ["2026-09-01", "2026-09-02", "2026-09-03", "2026-09-04"]);
+    check("dotted one period", dottedBuilt.summary.periods, ["2026-09"]);
+    var slashed = table("Date,Description,Amount\n01/09/2026,A,-5.00\n02/09/2026,B,-6.00\n");
+    check("slashed comma stays mdy",
+      guessRoles(slashed.headers, slashed.rows, { delimiter: "," }).dateOrder, "mdy");
+    var dottedSemi = table("Tarih;Aciklama;Tutar\n01.09.2026;A;-5,00\n02.09.2026;B;-6,00\n");
+    check("dotted semicolon dmy",
+      guessRoles(dottedSemi.headers, dottedSemi.rows, { delimiter: ";" }).dateOrder, "dmy");
+
+    /* A fixed catalog for the two category tests: the real one depends on
+       Store.boot() and on the active language. */
+    var realModel = Moon.Model;
+    Moon.Model = {
+      categories: function () {
+        return [
+          { id: "c_market", name: "Market", kind: "expense", fixed: false },
+          { id: "c_kira", name: "Kira", kind: "expense", fixed: true },
+          { id: "c_ulasim", name: "Ulaşım", kind: "expense", fixed: false },
+          { id: "c_saglik", name: "Sağlık", kind: "expense", fixed: false },
+          { id: "c_diger", name: "Diğer", kind: "expense", fixed: false },
+          { id: "c_maas", name: "Maaş", kind: "income", fixed: false }
+        ];
+      },
+      entries: function () { return []; }
+    };
+    try {
+      /* 10 — a Kategori cell written without Turkish letters still finds its
+         category instead of sliding into the bulk default. */
+      var cats = table("Tarih;Aciklama;Kategori;Tutar\n"
+        + "01.09.2026;MIGROS;Market;-100,00\n"
+        + "02.09.2026;KIRA;Kira;-5.000,00\n"
+        + "03.09.2026;MAAS;Maas;20.000,00\n"
+        + "04.09.2026;OTOBUS;Ulasim;-30,00\n"
+        + "05.09.2026;ECZANE;Saglik;-10,00\n");
+      var catRoles = guessRoles(cats.headers, cats.rows, { delimiter: ";" });
+      check("category column found", catRoles.category, 2);
+      var catBuilt = build(cats, catRoles, { defaultCategoryId: "c_diger" });
+      check("folded category match", catBuilt.drafts.map(function (d) { return d.categoryId; }),
+        ["c_market", "c_kira", "c_maas", "c_ulasim", "c_saglik"]);
+      check("folded category fixed flag", catBuilt.drafts[1].fixed, true);
+
+      /* 11 — unsigned amounts with a direction word column: the word decides,
+         so rent is not written as income. A signed amount still wins. */
+      var typed = table("Tarih;Aciklama;Islem Turu;Tutar\n"
+        + "01.09.2026;MAAS ODEMESI;Gelir;38.500,00\n"
+        + "02.09.2026;KIRA ODEMESI;Gider;14.000,00\n"
+        + "03.09.2026;MIGROS;Gider;1.847,60\n");
+      var typedRoles = guessRoles(typed.headers, typed.rows, { delimiter: ";" });
+      var typedBuilt = build(typed, typedRoles, {});
+      check("direction word rows", typedBuilt.drafts.map(function (d) { return d.direction; }),
+        ["in", "out", "out"]);
+      check("direction word sums", [typedBuilt.summary.sumIn, typedBuilt.summary.sumOut],
+        [3850000, 1584760]);
+      check("direction word is not a category",
+        typedBuilt.drafts.map(function (d) { return d.categoryId; }), [null, null, null]);
+      var signedWord = table("Tarih;Aciklama;Islem Turu;Tutar\n"
+        + "01.09.2026;IADE;Gider;-100,00\n02.09.2026;FAIZ;Gelir;50,00\n");
+      var signedBuilt = build(signedWord,
+        guessRoles(signedWord.headers, signedWord.rows, { delimiter: ";" }), {});
+      check("sign beats the word",
+        signedBuilt.drafts.map(function (d) { return d.direction; }), ["out", "in"]);
+      /* An unsigned row filed under an expense category is money going out,
+         and it keeps its category instead of being dropped as a mismatch. */
+      var unsignedCat = table("Tarih;Aciklama;Kategori;Tutar\n"
+        + "01.09.2026;X;Market;100,00\n02.09.2026;Y;Maas;200,00\n");
+      var unsignedBuilt = build(unsignedCat,
+        guessRoles(unsignedCat.headers, unsignedCat.rows, { delimiter: ";" }), {});
+      check("category kind decides direction",
+        unsignedBuilt.drafts.map(function (d) { return [d.direction, d.categoryId]; }),
+        [["out", "c_market"], ["in", "c_maas"]]);
+    } finally {
+      Moon.Model = realModel;
+    }
 
     if (global.console) {
       global.console.log("Moon.Importer selftest: " + results.pass + "/" + results.total + " pass");

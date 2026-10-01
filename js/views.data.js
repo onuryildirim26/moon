@@ -67,6 +67,14 @@
   var storeError = null;       /* last store:error payload — kept, not dismissed */
   var pendingFile = null;      /* handed over by startImport before render */
 
+  /* A redraw rebuilds the whole section, so the node the reader was standing on
+     is gone and the browser drops focus to <body> — the keyboard user is thrown
+     back to the top of the document on every wizard step (jury: "İleri'ye
+     basınca odak <body>'ye düşüyor"). `focusWant` names what the NEXT draw
+     should focus; the builder that happens to make that node offers it. */
+  var focusWant = null;        /* null | "step" | "role:<index>" */
+  var focusNode = null;        /* set during the draw, used at the end of it */
+
   function freshWizard() {
     return {
       step: 1,
@@ -218,6 +226,24 @@
   function redraw() {
     if (!isActive()) return;
     render(rootRef);
+  }
+
+  function wantFocus(name) {
+    focusWant = name || null;
+  }
+
+  /* Called by whoever builds a focus candidate. Only the node the pending wish
+     names is kept, so an unrelated draw never moves the reader's focus. */
+  function offerFocus(name, node) {
+    if (node && focusWant && focusWant === name) focusNode = node;
+    return node;
+  }
+
+  /* The one door between wizard steps. Every caller goes through it so that no
+     transition can forget to carry focus with it. */
+  function goToStep(next) {
+    wiz.step = next;
+    wantFocus("step");
   }
 
   function say(key, params) {
@@ -474,7 +500,7 @@
       wiz.encoding = result.encoding || "utf-8";
       wiz.warnings = result.warnings || [];
       reparse({ reguess: true });
-      wiz.step = 2;
+      goToStep(2);
       redraw();
     }, function (error) {
       var key = error && error.key ? error.key : "csv.err.readFailed";
@@ -588,6 +614,9 @@
     wiz.colRoles[index] = role;
     wiz.built = null;
     wiz.skipLines = null;
+    /* The redraw below replaces this very select; bring the reader back to it
+       instead of dropping them at the top of the document. */
+    wantFocus("role:" + index);
     redraw();
   }
 
@@ -728,7 +757,7 @@
     /* One call, one write, one state:change — that is the contract for §9 step 4. */
     var ids = m.addEntries(rows) || [];
     wiz.written = { count: ids.length };
-    wiz.step = 4;
+    goToStep(4);
     redraw();
   }
 
@@ -743,7 +772,14 @@
         "class": "steps__item" + (isActive ? " is-active" : ""),
         text: t(key)
       });
-      if (isActive) item.setAttribute("aria-current", "step");
+      if (isActive) {
+        item.setAttribute("aria-current", "step");
+        /* The step name is the only thing on screen that says where the reader
+           now is, so it is where focus lands after a step change. tabindex="-1"
+           keeps it reachable by script without adding a Tab stop. */
+        item.setAttribute("tabindex", "-1");
+        offerFocus("step", item);
+      }
       bar.appendChild(item);
     });
     return bar;
@@ -907,8 +943,17 @@
     return Math.round(util.clamp(score, 0, 1) * 100);
   }
 
-  function roleSelect(index) {
+  /* One select per column, all in a row. A bare "Sütun rolü" on each of them
+     leaves a screen reader user hearing the same name four times with no way to
+     tell which select files the amount — and putting "amount" on the wrong
+     column writes broken records in silence. So the name is built from three
+     referenced pieces: the role label, the column's position, and the column's
+     own visible header. `headerId` is the id of the header span the caller
+     already printed, so the header is referenced rather than repeated. */
+  function roleSelect(index, headerId, headerText) {
     var id = util.id("role");
+    var labelId = util.id("rolelabel");
+    var positionId = util.id("rolecol");
     var select = el("select", { id: id, "class": "field__input" });
     ROLES.forEach(function (role) {
       var attrs = { value: role };
@@ -918,8 +963,24 @@
     select.addEventListener("change", function () {
       setRole(index, select.value);
     });
+
+    /* "csv.column" is a requested key, not a shipped one. Until the catalogue
+       carries it, the position is spoken as the bare ordinal — a numeral, not a
+       sentence, so nothing untranslated reaches the reader and the four names
+       stay distinct either way. */
+    var I18n = Moon.I18n;
+    var hasKey = !!(I18n && typeof I18n.has === "function" && I18n.has("csv.column"));
+    var positionText = hasKey ? t("csv.column", { index: index + 1 }) : String(index + 1);
+
+    var parts = [labelId, positionId];
+    if (headerId && headerText) parts.push(headerId);
+    select.setAttribute("aria-labelledby", parts.join(" "));
+
+    offerFocus("role:" + index, select);
+
     return dom.frag([
-      el("label", { "class": "sr", "for": id, text: t("csv.role") }),
+      el("label", { "class": "sr", id: labelId, "for": id, text: t("csv.role") }),
+      el("span", { "class": "sr", id: positionId, text: positionText }),
       select
     ]);
   }
@@ -934,8 +995,9 @@
     for (i = 0; i < width; i += 1) {
       var head = el("th", { scope: "col" });
       var headerText = (wiz.parsed && wiz.parsed.headers[i]) || "";
-      head.appendChild(el("span", { "class": "dim", text: headerText }));
-      head.appendChild(roleSelect(i));
+      var headerId = util.id("rolehead");
+      head.appendChild(el("span", { "class": "dim", id: headerId, text: headerText }));
+      head.appendChild(roleSelect(i, headerId, headerText));
       var pct = confidenceFor(i);
       if (pct !== null) {
         head.appendChild(el("span", { "class": "tick", text: t("csv.role.confidence", { pct: pct }) }));
@@ -1116,6 +1178,22 @@
     return box;
   }
 
+  /* The duplicates that will actually be left out. `summary.duplicate` counts
+     every row the importer recognised as a repeat, including the ones repeated
+     inside this one file — and those are KEPT by default (importer.js: two
+     identical real payments do happen), so they are already inside `ok`. Adding
+     them here as well made the sentence report more rows than the file holds:
+     "3 rows read. 3 can be added, 1 is a duplicate, 0 were skipped." They stay
+     visible in the duplicates list either way, which is where the reader acts
+     on them. */
+  function skippedDuplicates(built) {
+    var count = 0;
+    (built.duplicates || []).forEach(function (dup) {
+      if (wiz.skipLines && wiz.skipLines[dup.line]) count += 1;
+    });
+    return count;
+  }
+
   /* One sentence, one arithmetic: read = importable + duplicate + skipped. */
   function summarySentence(built) {
     var summary = built.summary || {};
@@ -1123,7 +1201,7 @@
     return t("csv.step3.summary", {
       total: (summary.total || 0) + dropped,
       ok: selectedDrafts().length,
-      duplicate: summary.duplicate || 0,
+      duplicate: skippedDuplicates(built),
       rejected: (summary.rejected || 0) + dropped
     });
   }
@@ -1211,7 +1289,7 @@
 
     if (wiz.step > 1 && !wiz.written) {
       list.push(button(t("csv.back"), "quiet", function () {
-        wiz.step = wiz.step - 1;
+        goToStep(wiz.step - 1);
         redraw();
       }));
     }
@@ -1220,7 +1298,7 @@
       var map = mapping();
       var ready = map.date !== null && (map.amount !== null || map.debit !== null || map.credit !== null);
       list.push(button(t("csv.next"), "primary", function () {
-        wiz.step = 3;
+        goToStep(3);
         wiz.built = null;
         redraw();
       }, { disabled: !ready }));
@@ -1230,7 +1308,7 @@
       var built = ensureBuilt();
       var can = !!built && !built.error && selectedDrafts().length > 0;
       list.push(button(t("csv.next"), "primary", function () {
-        wiz.step = 4;
+        goToStep(4);
         redraw();
       }, { disabled: !can }));
     }
@@ -1246,6 +1324,7 @@
     if (wiz.written || wiz.errorKey) {
       list.push(button(t("common.close"), "quiet", function () {
         resetWizard();
+        wantFocus("step");
         redraw();
       }));
     }
@@ -1479,9 +1558,49 @@
 
   /* --------------------------------------------------------------- sample */
 
-  function sampleSection() {
+  function sampleOn() {
     var Sample = Moon.Sample;
-    var on = !!(Sample && typeof Sample.isOn === "function" && Sample.isOn());
+    return !!(Sample && typeof Sample.isOn === "function" && Sample.isOn());
+  }
+
+  function clearSample() {
+    var Sample = Moon.Sample;
+    if (Sample && typeof Sample.clear === "function") Sample.clear();
+    /* The flash belongs to this section's next draw. Cleared from the strip on
+       another section it would sit in the queue and surface later, out of
+       context, so it is only queued when this section is the one on screen. */
+    if (isActive()) say("data.sample.cleared");
+    redraw();
+  }
+
+  /* The sample strip has to stand at the top of EVERY section, not only this
+     one (contract §626, design "Boş durum"): a visitor who opens the sample
+     month and then reads the panel would otherwise take 1.885,00 ₺ of invented
+     daily allowance for their own money. This view owns the sentence but not
+     the persistent notice slot, which is app.js's — so the band is built here
+     and mounted there. Returns null when the sample is off.
+
+     app.js must call this: on every route and lang change, put the returned
+     node in the same persistent slot as the read-only note and the store error,
+     above the view. */
+  function sampleNotice() {
+    if (!sampleOn()) return null;
+    return band({
+      kind: "sample",
+      messageKey: "data.sample.strip",
+      actions: [{
+        labelKey: "data.sample.off",
+        /* Both hooks, as storeErrorBand does: Moon.UI.button prints
+           `btn--<kind>` and moon.css styles `.btn.is-<kind>`. */
+        kind: "quiet",
+        "class": "is-quiet",
+        onClick: clearSample
+      }]
+    });
+  }
+
+  function sampleSection() {
+    var on = sampleOn();
     var body = [];
 
     if (on) {
@@ -1490,13 +1609,10 @@
     body.push(prose(t("data.sample.body")));
 
     if (on) {
-      body.push(actions([button(t("data.sample.off"), "quiet", function () {
-        if (Sample && typeof Sample.clear === "function") Sample.clear();
-        say("data.sample.cleared");
-        redraw();
-      })]));
+      body.push(actions([button(t("data.sample.off"), "quiet", clearSample)]));
     } else {
       body.push(actions([button(t("data.sample.on"), "primary", function () {
+        var Sample = Moon.Sample;
         if (Sample && typeof Sample.apply === "function") Sample.apply();
         redraw();
       })]));
@@ -1723,6 +1839,7 @@
     if (!root) return;
     mounted = true;
     rootRef = root;
+    focusNode = null;          /* the candidates are rebuilt below */
     dom.clear(root);
 
     /* A file dropped on the panel strip arrives before this view exists. */
@@ -1750,11 +1867,25 @@
     root.appendChild(storageSection());
     root.appendChild(wipeSection());
     root.appendChild(aboutSection());
+
+    /* Last act of the draw: the whole tree is in the document, so the node a
+       step change asked for can take focus. An unanswered wish is dropped
+       rather than carried into an unrelated draw. */
+    if (focusWant) {
+      var target = focusNode;
+      focusWant = null;
+      focusNode = null;
+      if (target && typeof target.focus === "function") target.focus();
+    }
   }
 
   function destroy() {
     mounted = false;
     rootRef = null;
+    /* A wish made just before the reader left belongs to a draw that will never
+       happen; carried over, it would pull focus out of the next section. */
+    focusWant = null;
+    focusNode = null;
   }
 
   /* Called by the panel strip (G11) when a CSV lands there. Safe before the
@@ -1787,6 +1918,8 @@
     titleKey: "nav.data",
     render: render,
     destroy: destroy,
-    startImport: startImport
+    startImport: startImport,
+    /* For app.js's persistent notice slot — see sampleNotice(). */
+    sampleNotice: sampleNotice
   };
 })(window);

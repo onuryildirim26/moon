@@ -262,6 +262,10 @@
       if (!amount) return;
       var cat = cats[limit.categoryId];
       if (!cat || cat.archived) return;
+      /* An income category has no spending to cap, and budgetRows refuses to
+         draw a row for one. Counting its limit here would grow the allowance
+         pool by money the reader can never find in the Limits section. */
+      if (cat.kind === "income") return;
       out.limitTotal += amount;
       if (cat.fixed) out.limitFixed += amount;
       else out.limitVariable += amount;
@@ -767,8 +771,12 @@
   function validateLimit(draft) {
     var errors = {};
     var d = draft || {};
+    var limitCat = text(d.categoryId) ? categoryById(d.categoryId) : null;
     if (!text(d.categoryId)) errors.categoryId = "err.categoryRequired";
-    else if (!categoryById(d.categoryId)) errors.categoryId = "err.categoryUnknown";
+    else if (!limitCat) errors.categoryId = "err.categoryUnknown";
+    /* A cap belongs to spending. periodSummary now ignores a limit parked on an
+       income category, so accepting one would store a row nothing ever reads. */
+    else if (limitCat.kind === "income") errors.categoryId = "err.limitOnIncome";
     if (d.amount !== null && d.amount !== undefined && d.amount !== "" && int(d.amount) < 0) {
       errors.amount = "err.amountPositive";
     }
@@ -934,6 +942,25 @@
     ENTRY_FIELDS.forEach(function (field) {
       if (Object.prototype.hasOwnProperty.call(patch, field)) merged[field] = patch[field];
     });
+
+    /* Moving a record to another category has to move its fixed/variable
+       answer too, or correcting a misfiled row leaves the daily allowance
+       wrong: spending counted as fixed never leaves the pool, so the panel
+       keeps handing out money that is already gone.
+       Every record carries a `fixed` boolean even when it only inherited one,
+       so the two cases are told apart by the category the record is leaving: a
+       value that still agrees with it was inherited and follows the record to
+       its new home, while a value that disagrees was set on the record itself
+       and is kept. An explicit `fixed` in the patch always wins. */
+    if (Object.prototype.hasOwnProperty.call(patch, "categoryId") &&
+        !Object.prototype.hasOwnProperty.call(patch, "fixed") &&
+        merged.categoryId !== current.categoryId) {
+      var leaving = categoryById(current.categoryId);
+      var inherited = typeof current.fixed !== "boolean" ||
+        !!current.fixed === !!(leaving && leaving.fixed);
+      if (inherited) merged.fixed = !!(categoryById(merged.categoryId) || {}).fixed;
+    }
+
     if (!validateEntry(merged).ok) return null;
     merged.amount = positiveInt(merged.amount);
     merged.note = text(merged.note).slice(0, 200);
@@ -1085,14 +1112,33 @@
       }
       if (index === -1) return null;
 
+      var leaving = rows[index];
       var targetId = fallbackCategoryId(draft);
       if (targetId === id) return null;
 
-      /* No entry is ever lost with its category: they move, they do not die. */
+      var target = null;
+      bucket(draft, "categories").forEach(function (row) {
+        if (row && row.id === targetId) target = row;
+      });
+      var targetFixed = !!(target && target.fixed);
+
+      /* No entry is ever lost with its category: they move, they do not die.
+         Their fixed/variable answer moves with them under the same rule
+         updateEntry follows — an inherited flag follows the move, one set on
+         the record is kept. Leaving an inherited flag behind would strand
+         spending outside the allowance pool while its new category's budget
+         row still counts it. */
+      function carry(row) {
+        if (typeof row.fixed !== "boolean" || !!row.fixed === !!(leaving && leaving.fixed)) {
+          row.fixed = targetFixed;
+        }
+        row.categoryId = targetId;
+      }
+
       var movedEntries = 0;
       bucket(draft, "entries").forEach(function (e) {
         if (e && e.categoryId === id) {
-          e.categoryId = targetId;
+          carry(e);
           movedEntries += 1;
         }
       });
@@ -1100,7 +1146,7 @@
       var movedRecurring = 0;
       bucket(draft, "recurring").forEach(function (r) {
         if (r && r.categoryId === id) {
-          r.categoryId = targetId;
+          carry(r);
           movedRecurring += 1;
         }
       });
@@ -1129,10 +1175,111 @@
     }, { immediate: true });
   }
 
+  /* The same rule as removeCategory, offered on a Store draft so a caller that
+     deletes categories inside its own single write can finish the job. Sample
+     .clear() is the one caller: it drops the sample categories, and any record
+     the reader filed under one of them would otherwise be left pointing at a
+     category that no longer exists — no ledger filter finds it, no budget row
+     counts it, and the category list offers no way to repair it.
+     `goneIds` maps each id about to disappear (or already gone) to the category
+     record it belonged to, or to `true` when the caller no longer holds it;
+     the record lets an inherited fixed/variable flag be refreshed the way
+     updateEntry refreshes it. Nothing is added or removed from `categories`
+     except the catch-all this may have to create. Orphaned limits are dropped
+     rather than moved, because two limits on one category is the one shape
+     periodSummary and budgetRows read differently. */
+  function rehomeOrphans(draft, goneIds) {
+    var result = { targetId: null, movedEntries: 0, movedRecurring: 0, removedLimits: 0 };
+    if (!draft || !goneIds) return result;
+
+    function isGone(id) {
+      return !!id && Object.prototype.hasOwnProperty.call(goneIds, id) && !!goneIds[id];
+    }
+
+    function leftBehind(id) {
+      var row = isGone(id) ? goneIds[id] : null;
+      return row && typeof row === "object" ? row : null;
+    }
+
+    var entryRows = bucket(draft, "entries");
+    var recurringRows = bucket(draft, "recurring");
+    var limitRows = bucket(draft, "limits");
+
+    var needsHome = entryRows.some(function (e) { return e && isGone(e.categoryId); }) ||
+      recurringRows.some(function (r) { return r && isGone(r.categoryId); });
+
+    for (var i = limitRows.length - 1; i >= 0; i -= 1) {
+      if (limitRows[i] && isGone(limitRows[i].categoryId)) {
+        limitRows.splice(i, 1);
+        result.removedLimits += 1;
+      }
+    }
+
+    if (!needsHome) return result;
+
+    var targetId = fallbackCategoryId(draft);
+    result.targetId = targetId;
+    if (isGone(targetId)) return result;      /* nothing safe to move into */
+
+    var target = null;
+    bucket(draft, "categories").forEach(function (row) {
+      if (row && row.id === targetId) target = row;
+    });
+    var targetFixed = !!(target && target.fixed);
+
+    /* Same rule as updateEntry: a flag that still agrees with the category the
+       record is leaving was inherited and follows it; one that disagrees was
+       set on the record and stays. */
+    function rehome(row) {
+      var was = leftBehind(row.categoryId);
+      if (typeof row.fixed !== "boolean" || (was && !!row.fixed === !!was.fixed)) {
+        row.fixed = targetFixed;
+      }
+      row.categoryId = targetId;
+    }
+
+    entryRows.forEach(function (e) {
+      if (e && isGone(e.categoryId)) {
+        rehome(e);
+        result.movedEntries += 1;
+      }
+    });
+    recurringRows.forEach(function (r) {
+      if (r && isGone(r.categoryId)) {
+        rehome(r);
+        result.movedRecurring += 1;
+      }
+    });
+
+    return result;
+  }
+
   function setLimit(categoryId, minor) {
     if (!categoryId) return null;
     var amount = minor === null || minor === undefined ? null : positiveInt(minor);
+    /* Clearing one is always allowed — a limit that arrived on an income
+       category through a hand-edited backup has to be removable. Setting one
+       is not: see validateLimit. */
+    if (amount) {
+      var target = categoryById(categoryId);
+      if (target && target.kind === "income") return null;
+    }
     return write("limit:set", function (draft) {
+      /* Budgeting a sample category makes that category the reader's too.
+         Claiming only the limit is not enough: clearing the sample month would
+         take the category with it, and a limit whose category is gone is
+         dropped as an orphan — the reader's figure would disappear by a side
+         door. A record is only as safe as what it hangs from. */
+      if (amount) {
+        var rows = bucket(draft, "categories");
+        for (var c = 0; c < rows.length; c += 1) {
+          if (rows[c] && rows[c].id === categoryId) {
+            claim(rows[c]);
+            break;
+          }
+        }
+      }
+
       var limits = bucket(draft, "limits");
       for (var i = limits.length - 1; i >= 0; i -= 1) {
         if (!limits[i] || limits[i].categoryId !== categoryId) continue;
@@ -1474,6 +1621,7 @@
     addCategory: addCategory,
     updateCategory: updateCategory,
     removeCategory: removeCategory,
+    rehomeOrphans: rehomeOrphans,
     setLimit: setLimit,
 
     addRecurring: addRecurring,
@@ -1779,6 +1927,33 @@
     ok("removeCategory.moved", st.entries[0].categoryId !== "c_groc");
     eq("removeCategory.limitGone", st.limits.length, 0);
 
+    /* 11b — the fixed/variable flag travels with the entry, so spending does
+             not fall out of the allowance pool when its category is deleted. */
+    st = scene("2026-09-21", {
+      categories: [
+        { id: "c_rent", name: "Kira", kind: "expense", fixed: true, archived: false },
+        { id: "c_other", name: catchAllName(), kind: "expense", fixed: false, archived: false }
+      ],
+      limits: [{ id: "l1", categoryId: "c_other", amount: 600000 }],
+      entries: [entry("e1", "2026-09-05", 300000, "c_rent", { fixed: true })]
+    });
+    eq("removeFixed.poolBefore", dailyAllowance("2026-09").remainingAmount, 600000);
+    ok("removeFixed.ok", !!(removeCategory("c_rent") || {}).ok);
+    eq("removeFixed.target", st.entries[0].categoryId, "c_other");
+    eq("removeFixed.flagFollows", st.entries[0].fixed, false);
+    eq("removeFixed.poolAfter", dailyAllowance("2026-09").remainingAmount, 300000);
+
+    /* An override is still an override. */
+    st = scene("2026-09-21", {
+      categories: [
+        { id: "c_rent", name: "Kira", kind: "expense", fixed: true, archived: false },
+        { id: "c_other", name: catchAllName(), kind: "expense", fixed: false, archived: false }
+      ],
+      entries: [entry("e1", "2026-09-05", 300000, "c_rent", { fixed: false })]
+    });
+    removeCategory("c_rent");
+    eq("removeFixed.overrideKept", st.entries[0].fixed, false);
+
     /* 12 — duplicate fingerprint shape. */
     scene("2026-09-21", {});
     eq("duplicateKey",
@@ -1787,6 +1962,108 @@
     eq("duplicateKey.noteCap",
       duplicateKey({ date: "2026-09-26", amount: 100, direction: "out",
         note: "bir cok uzun aciklama daha da uzun" }).split("|")[3].length, 24);
+
+    /* 12b — a limit parked on an income category is inert: it never joins the
+             allowance pool (budgetRows already refuses it a row), it cannot be
+             set, and it can still be cleared. */
+    st = scene("2026-09-21", {
+      limits: [
+        { id: "l1", categoryId: "c_groc", amount: 600000 },
+        { id: "l2", categoryId: "c_sal", amount: 5000000 }
+      ],
+      entries: []
+    });
+    eq("incomeLimit.pool", periodSummary("2026-09").limitVariable, 600000);
+    eq("incomeLimit.total", periodSummary("2026-09").limitTotal, 600000);
+    ok("incomeLimit.noRow", budgetRows("2026-09").every(function (r) {
+      return r.categoryId !== "c_sal";
+    }));
+    ok("incomeLimit.rejected", !validateLimit({ categoryId: "c_sal", amount: 100 }).ok);
+    eq("incomeLimit.errorKey",
+      validateLimit({ categoryId: "c_sal", amount: 100 }).errors.categoryId, "err.limitOnIncome");
+    eq("incomeLimit.setRefused", setLimit("c_sal", 100), null);
+    eq("incomeLimit.notStored", st.limits.length, 2);
+    setLimit("c_sal", null);
+    eq("incomeLimit.clearable", st.limits.length, 1);
+    ok("incomeLimit.expenseStillWorks", !!setLimit("c_fun", 100000));
+
+    /* 12c — moving an entry to another category moves its fixed/variable
+             answer with it, unless that answer was set on the record itself.
+             Getting this wrong leaves spending outside the allowance pool. */
+    function catchAllName() {
+      var catalog = Moon.Lang ? Moon.Lang.tr : null;
+      return (catalog && catalog["cat.other"]) || "cat.other";
+    }
+
+    function movedFixed(startCat, endCat, extra) {
+      st = scene("2026-09-21", { entries: [entry("e1", "2026-09-05", 100, startCat, extra)] });
+      updateEntry("e1", { categoryId: endCat });
+      return st.entries[0].fixed;
+    }
+    eq("moveFixed.inheritedToVariable", movedFixed("c_rent", "c_groc", { fixed: true }), false);
+    eq("moveFixed.inheritedToFixed", movedFixed("c_groc", "c_rent", { fixed: false }), true);
+    eq("moveFixed.missingFlag", movedFixed("c_groc", "c_rent", null), true);
+    eq("moveFixed.overrideFalseKept", movedFixed("c_rent", "c_groc", { fixed: false }), false);
+    eq("moveFixed.overrideTrueKept", movedFixed("c_groc", "c_rent", { fixed: true }), true);
+
+    st = scene("2026-09-21", { entries: [entry("e1", "2026-09-05", 100, "c_rent", { fixed: true })] });
+    updateEntry("e1", { categoryId: "c_groc", fixed: true });
+    eq("moveFixed.explicitPatchWins", st.entries[0].fixed, true);
+    updateEntry("e1", { note: "only a note" });
+    eq("moveFixed.noMoveNoChange", st.entries[0].fixed, true);
+
+    /* The pool reading is the reason all of the above matters. */
+    st = scene("2026-09-21", {
+      limits: [{ id: "l1", categoryId: "c_groc", amount: 600000 }],
+      entries: [entry("e1", "2026-09-05", 300000, "c_rent", { fixed: true })]
+    });
+    eq("moveFixed.poolBefore", dailyAllowance("2026-09").remainingAmount, 600000);
+    updateEntry("e1", { categoryId: "c_groc" });
+    eq("moveFixed.poolAfter", dailyAllowance("2026-09").remainingAmount, 300000);
+
+    /* 12d — rehomeOrphans: the rule removeCategory follows, offered to a caller
+             that deletes categories inside its own write (Sample.clear). */
+    st = scene("2026-09-21", {
+      categories: [
+        { id: "c_groc", name: "Market", kind: "expense", fixed: false, archived: false },
+        /* The catch-all is found by name, so it has to carry the catalog's
+           own label rather than a look-alike. */
+        { id: "c_other", name: catchAllName(), kind: "expense", fixed: false, archived: false }
+      ],
+      entries: [entry("e1", "2026-09-05", 12345, "c_gone", { fixed: true })],
+      recurring: [{ id: "r1", name: "Kira", amount: 1800000, direction: "out",
+        categoryId: "c_gone", dayOfMonth: 1, fixed: true, startDate: "2026-01-01",
+        endDate: null, active: true, lastGeneratedPeriod: null }],
+      limits: [{ id: "l1", categoryId: "c_gone", amount: 600000 },
+        { id: "l2", categoryId: "c_groc", amount: 100000 }]
+    });
+    var gone = Object.create(null);
+    gone.c_gone = { id: "c_gone", name: "Kira", kind: "expense", fixed: true, archived: false };
+    var rehomed = rehomeOrphans(st, gone);
+    eq("rehome.entries", rehomed.movedEntries, 1);
+    eq("rehome.recurring", rehomed.movedRecurring, 1);
+    eq("rehome.limitsDropped", rehomed.removedLimits, 1);
+    eq("rehome.target", st.entries[0].categoryId, "c_other");
+    eq("rehome.ruleTarget", st.recurring[0].categoryId, "c_other");
+    eq("rehome.inheritedFixedFollows", st.entries[0].fixed, false);
+    eq("rehome.limitsLeft", st.limits.length, 1);
+    eq("rehome.noOrphans", entries({ period: "2026-09" }).filter(function (e) {
+      return !categoryById(e.categoryId);
+    }).length, 0);
+
+    /* An override survives the re-home, and an untouched state is left alone. */
+    st = scene("2026-09-21", {
+      categories: [{ id: "c_other", name: catchAllName(), kind: "expense", fixed: false, archived: false }],
+      entries: [entry("e1", "2026-09-05", 100, "c_gone", { fixed: true })]
+    });
+    rehomeOrphans(st, { c_gone: { id: "c_gone", name: "X", kind: "expense", fixed: false, archived: false } });
+    eq("rehome.overrideKept", st.entries[0].fixed, true);
+
+    st = scene("2026-09-21", { entries: [entry("e1", "2026-09-05", 100, "c_groc")] });
+    var noop = rehomeOrphans(st, Object.create(null));
+    eq("rehome.nothingToDo", noop.movedEntries, 0);
+    eq("rehome.noCategoryCreated", st.categories.length, 5);
+    eq("rehome.badCall", rehomeOrphans(null, null).movedEntries, 0);
 
     /* 13 — broken records must not crash a read. */
     scene("2026-09-21", {

@@ -154,8 +154,10 @@ table {
   transform: translateY(0);
 }
 
-/* Every digit in the app scans as a column. */
+/* Every digit in the app scans as a column. (.num and .tnum are the same
+   request under two names: views write .num, ui.js writes .tnum.) */
 .num,
+.tnum,
 .money,
 .hero__value,
 .hero__aside,
@@ -414,11 +416,6 @@ h3 {
   color: var(--ink-dim);
 }
 
-.disc.is-small {
-  width: 10px;
-  height: 10px;
-}
-
 /* ------------------------------------------------------------------ meter
    48px row: name left, scale in the middle, reading right. */
 .meter {
@@ -630,21 +627,21 @@ h3 {
   display: none;
 }
 
+/* The date returns as a sixth column; the actions keep theirs. Dropping the
+   action column here used to be the only way to fit the date in, and it took
+   edit and copy away from every filtered view. */
 .ledger.is-flat .ledger-row {
   grid-template-columns:
     minmax(0, 72px)
     minmax(0, var(--cat-col))
     minmax(0, 1fr)
+    var(--act-col)
     var(--amount-col)
     var(--note-col);
 }
 
 .ledger.is-flat .ledger-row__date {
   display: block;
-}
-
-.ledger.is-flat .ledger-row__actions {
-  display: none;
 }
 
 .ledger__summary {
@@ -677,10 +674,18 @@ h3 {
    Three measured columns — whole (right aligned) / separator (fixed 6px) /
    cents — plus a lead and a trail slot for the sign and the symbol. The cents
    stay the SAME SIZE and only lose ink, so the decimal separator lands on the
-   same pixel in every row (G4). */
+   same pixel in every row (G4).
+
+   The slack column comes FIRST. The cell is as wide as --amount-col whatever
+   it holds, and whichever column absorbs that slack opens a hole. Put the
+   hole left of the sign and the whole amount reads as one block: "-80,00",
+   not "-        80,00". The separator still sits in a fixed 6px track with
+   two digits and an optional symbol to its right, so it lands on the same
+   pixel in every row — alignment comes from the right edge, not from the
+   flexible track. */
 .money {
   display: inline-grid;
-  grid-template-columns: auto auto minmax(0, 1fr) 6px auto auto;
+  grid-template-columns: minmax(0, 1fr) auto auto auto 6px auto auto;
   align-items: baseline;
   min-width: var(--amount-col);
   font-size: var(--t-amount);
@@ -689,34 +694,35 @@ h3 {
 }
 
 .m-sign {
-  grid-column: 1;
+  grid-column: 2;
   text-align: right;
 }
 
 .m-whole {
-  grid-column: 3;
+  grid-column: 4;
   text-align: right;
 }
 
 .m-sep {
-  grid-column: 4;
+  grid-column: 5;
   text-align: center;
 }
 
 .m-cents {
-  grid-column: 5;
+  grid-column: 6;
   color: var(--ink-dim);
 }
 
 .m-sym {
-  grid-column: 6;
+  grid-column: 7;
   padding-left: 0.25em;
   color: var(--ink-dim);
 }
 
-/* EN layout puts the symbol in front of the digits. */
+/* EN layout puts the symbol in front of the digits, between the sign and the
+   first digit. */
 .money.is-sym-first .m-sym {
-  grid-column: 2;
+  grid-column: 3;
   padding-left: 0;
   padding-right: 0.15em;
 }
@@ -731,11 +737,6 @@ h3 {
 
 .money.is-dim {
   color: var(--ink-dim);
-}
-
-.money.is-mid {
-  font-size: var(--t-mid);
-  font-weight: 400;
 }
 
 /* --------------------------------------------------- margin marks († ○ ↧) */
@@ -783,10 +784,6 @@ h3 {
   height: 100%;
 }
 
-.chart__point:focus-visible {
-  outline-offset: 1px;
-}
-
 .yeargrid {
   margin-top: var(--s2);
 }
@@ -824,6 +821,15 @@ h3 {
 
 .table th {
   font-weight: 500;
+  color: var(--ink-dim);
+}
+
+/* A <caption> centres itself by browser default, which is the one centred
+   line on a page where every column reads from the left. */
+.datatable__caption {
+  padding-bottom: var(--s1);
+  text-align: left;
+  font-size: var(--t-sm);
   color: var(--ink-dim);
 }
 
@@ -870,8 +876,10 @@ h3 {
   color: var(--ink-dim);
 }
 
+/* .field__read is the amount readout under a money field: "1234,56" typed,
+   "1.234,56 ₺" read back. ui.js emits that name, so the rule carries it. */
 .field__hint,
-.field__preview {
+.field__read {
   font-size: var(--t-sm);
   color: var(--ink-dim);
 }
@@ -881,6 +889,14 @@ h3 {
   color: var(--over);
 }
 
+/* An empty field has nothing but its frame to say where it starts, so WCAG
+   1.4.11 asks that frame for 3:1 against the ground behind it. --rule is a
+   hairline meant for rhythm, not for a boundary: measured against --bg it is
+   1.37:1 on the dial and 1.32:1 on paper, and even prefers-contrast:more only
+   lifts it to 2.09 / 2.07. --ink-dim — the same ink the field's own label is
+   set in — measures 6.49:1 and 5.15:1, so the field frame is drawn with that
+   and hover steps up to full --ink. (Rules between rows keep --rule: a
+   divider is decoration, a control boundary is not.) */
 input[type="text"],
 input[type="search"],
 input[type="number"],
@@ -893,7 +909,7 @@ textarea {
   padding: 6px 8px;
   background: var(--bg);
   color: var(--ink);
-  border: 1px solid var(--rule);
+  border: 1px solid var(--ink-dim);
   border-radius: var(--radius);
   font-size: var(--t-body);
 }
@@ -906,7 +922,7 @@ textarea {
 input:hover,
 select:hover,
 textarea:hover {
-  border-color: var(--rule-strong);
+  border-color: var(--ink);
 }
 
 [aria-invalid="true"] {
@@ -950,9 +966,13 @@ input[type="radio"] {
   transition: opacity var(--dur-fast) var(--ease);
 }
 
+/* .picker__select is listed here too: it wears the button frame, not the field
+   frame, so it must not pick up the stronger field hover from `select:hover`
+   and out-shout the buttons standing next to it. */
 .btn:hover,
 .picker > button:hover,
-.period > button:hover {
+.period > button:hover,
+.picker__select:hover {
   border-color: var(--rule-strong);
 }
 
@@ -1051,6 +1071,12 @@ input[type="radio"] {
   font-size: var(--t-sm);
 }
 
+/* Three names for the same slot: ui.js writes the band's sentence into
+   .notice__text and extra prose into .notice__prose, while a view that builds
+   its own multi-line body uses .notice__body. All three are the text column
+   of the band. */
+.notice__text,
+.notice__prose,
 .notice__body {
   flex: 1 1 18ch;
   min-width: 0;
@@ -1107,6 +1133,14 @@ input[type="radio"] {
   color: var(--ink-dim);
 }
 
+/* The countdown as a rule that shortens: ui.js sets its width once a second.
+   A full-width flex item, so it takes the line under the band's own words. */
+.undo__bar {
+  flex: none;
+  height: 2px;
+  background: var(--rule-strong);
+}
+
 .noscript {
   max-width: 520px;
   margin: var(--s3) auto;
@@ -1140,6 +1174,32 @@ input[type="radio"] {
   border-bottom: 1px solid var(--rule);
 }
 
+/* Without a rule of its own this one lands on the browser default: a filled
+   grey box with an outset border, the only raised surface anywhere in the
+   app. It is a glyph on a 1px frame that appears on hover, like every other
+   quiet control. */
+.dialog__close {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 32px;
+  min-height: 32px;
+  padding: 0 var(--s1);
+  background: none;
+  color: var(--ink-dim);
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  font-size: var(--t-body);
+  line-height: 1;
+  cursor: pointer;
+}
+
+.dialog__close:hover {
+  color: var(--ink);
+  border-color: var(--rule-strong);
+}
+
 .dialog__body {
   padding: var(--s2);
 }
@@ -1168,38 +1228,44 @@ input[type="radio"] {
   top: 0;
   left: 0;
   right: 0;
-  height: calc(var(--row-h) * 3);
   border-top: 1px solid var(--rule);
   pointer-events: none;
 }
 
-.empty__ghost::before,
-.empty__ghost::after {
-  content: "";
-  position: absolute;
-  left: 0;
-  right: 0;
-  height: 1px;
-  background: var(--rule);
+/* The heading band and the three empty rows under it — real rows, so the
+   column hairlines line up down the page and the page reads as a ruled ledger
+   waiting to be written in rather than three loose lines. ui.js writes the
+   column count into --ghost-cols. */
+.ghost__head,
+.ghost__row {
+  display: grid;
+  grid-template-columns: repeat(var(--ghost-cols, 3), minmax(0, 1fr));
+  border-bottom: 1px solid var(--rule);
 }
 
-.empty__ghost::before {
-  top: var(--row-h);
+/* Half height and a stronger rule under it: the shape of a column-heading
+   row, with nothing written in it. */
+.ghost__head {
+  height: calc(var(--row-h) / 2);
+  border-bottom-color: var(--rule-strong);
 }
 
-.empty__ghost::after {
-  top: calc(var(--row-h) * 2);
+.ghost__row {
+  height: var(--row-h);
 }
 
-.empty__title,
-.empty__body,
-.empty__actions,
-.empty__foot {
+.ghost__cell + .ghost__cell {
+  border-left: 1px solid var(--rule);
+}
+
+/* One lift for the whole copy block, so the ruled lines stay behind every
+   word of it. */
+.empty__copy {
   position: relative;
   z-index: 1;
 }
 
-.empty__title {
+.empty__heading {
   font-family: var(--font-prose);
   font-size: var(--t-prose-h);
   font-weight: 400;
@@ -1221,6 +1287,12 @@ input[type="radio"] {
 
 .empty__actions .btn.is-row:last-child {
   border-bottom: 1px solid var(--rule);
+}
+
+/* The label carries the action, the hint says what it costs. */
+.empty__action-hint {
+  color: var(--ink-dim);
+  font-size: var(--t-sm);
 }
 
 .empty__foot {
@@ -1374,6 +1446,7 @@ input[type="radio"] {
   .btn,
   .picker > button,
   .period > button,
+  .dialog__close,
   .rail__item,
   .rail__more,
   .switch {
@@ -1487,6 +1560,11 @@ input[type="radio"] {
     justify-self: end;
   }
 
+  /* Four columns on the first line; the row actions take a second line of
+     their own. A finger has no hover state to reveal them with, and hiding
+     them was leaving no way at all to edit or copy a record from a phone —
+     only the checkbox and the bulk delete strip survived. Every cell is placed
+     by hand so the second line can appear without shuffling the first. */
   .ledger-row {
     grid-template-columns:
       minmax(0, var(--cat-col))
@@ -1496,8 +1574,32 @@ input[type="radio"] {
     min-height: 44px;
   }
 
+  .ledger-row__cat {
+    grid-area: 1 / 1 / 2 / 2;
+  }
+
+  .ledger-row__note {
+    grid-area: 1 / 2 / 2 / 3;
+  }
+
+  .ledger-row__amount {
+    grid-area: 1 / 3 / 2 / 4;
+  }
+
+  .ledger-row__mark {
+    grid-area: 1 / 4 / 2 / 5;
+  }
+
   .ledger-row__actions {
-    display: none;
+    grid-area: 2 / 1 / 3 / -1;
+    justify-content: flex-start;
+    gap: var(--s1);
+    opacity: 1;
+  }
+
+  .ledger-row__action,
+  .dialog__close {
+    min-width: 44px;
   }
 
   .ledger.is-flat .ledger-row {
@@ -1506,6 +1608,10 @@ input[type="radio"] {
       minmax(0, 1fr)
       var(--amount-col)
       var(--note-col);
+  }
+
+  .ledger.is-flat .ledger-row__date {
+    grid-area: 1 / 1 / 2 / 2;
   }
 
   .ledger.is-flat .ledger-row__cat {

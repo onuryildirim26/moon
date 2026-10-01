@@ -55,10 +55,23 @@
      material's name, never an icon. */
   var THEMES = ["system", "dial", "paper"];
 
+  /* The media query each theme-color meta in index.html carries while the
+     reader is on "system". Keyed by the surface, not by the colour: the hexes
+     live in index.html next to the tokens they mirror and are never touched
+     from here. */
+  var SURFACE_MEDIA = {
+    dial: "(prefers-color-scheme: dark)",
+    paper: "(prefers-color-scheme: light)"
+  };
+
   var PERIOD_RE = /^\d{4}-\d{2}$/;
   var NUDGE_AT = 40;          /* contract §14 step 8 */
   var ADAPT_MAX = 1400;       /* ms — belt for an animationend that never comes */
   var ANNOUNCE_MS = 2500;     /* how long a screen-reader line stays in #strip */
+  /* ms — Store debounces a write by 250 and then hands it to an idle callback
+     with a 1000ms timeout, so a state change arrives well before the attempt
+     it caused. This is how long to wait before asking whether it worked. */
+  var RECOVER_MS = 1400;
 
   /* ------------------------------------------------------------ module state */
 
@@ -77,6 +90,7 @@
      whole session — persistNow stays silent afterwards. */
   var readOnlyNote = null;
   var storeError = null;
+  var recoverTimer = null;    /* pending "did that write get through?" look */
 
   var ctl = null;             /* header control references, built once */
   var periodAccessor = false; /* false on an engine that refused the getter */
@@ -237,6 +251,25 @@
     return THEMES.indexOf(value) === -1 ? "system" : value;
   }
 
+  /* On a phone the address bar is part of the page, so it has to follow the
+     surface too. index.html ships one theme-color meta per surface behind its
+     own media query, which covers "system" on its own and before any script
+     runs. A pinned theme is exactly the case the system query gets wrong, so
+     the queries are retargeted instead: the chosen surface gets `all` and the
+     other `not all`. Colours are not rewritten here — they stay in index.html
+     beside the tokens they mirror, in one place rather than two. */
+  function syncThemeColor(theme) {
+    safe(function () {
+      var metas = doc.querySelectorAll('meta[name="theme-color"][data-surface]');
+      var pinned = theme === "dial" || theme === "paper";
+      for (var i = 0; i < metas.length; i += 1) {
+        var surface = metas[i].getAttribute("data-surface");
+        if (pinned) metas[i].setAttribute("media", surface === theme ? "all" : "not all");
+        else metas[i].setAttribute("media", SURFACE_MEDIA[surface] || "all");
+      }
+    });
+  }
+
   /* "system" REMOVES the attribute rather than writing it: the page then follows
      prefers-color-scheme, which is what tokens.css is built around. */
   function applyTheme(theme) {
@@ -246,6 +279,7 @@
       if (theme === "dial" || theme === "paper") html.setAttribute("data-theme", theme);
       else html.removeAttribute("data-theme");
     });
+    syncThemeColor(theme);
     if (Moon.bus && typeof Moon.bus.emit === "function") {
       Moon.bus.emit("theme:change", { theme: theme });
     }
@@ -557,6 +591,36 @@
     return { labelKey: "nav.data", href: "#" + DATA_HASH, "class": "is-quiet" };
   }
 
+  /* E7 names no "a write finally worked" event: persistNow clears
+     status.quotaHit and status.lastError on success and stays silent. Without
+     this, a band raised by a full disk would sit there for the rest of the
+     session — unclosable, telling the reader nothing is being saved — while
+     every entry since then saved fine. Store.status is the live object the
+     store mutates, so the shell re-reads it rather than waiting for an event
+     that is never coming. A fresh failure re-raises the band through
+     store:error as before, so nothing is swallowed. */
+  function syncStoreError() {
+    if (!storeError) return;
+    var st = Moon.Store;
+    if (!st || !st.status) return;          /* nothing to read: leave it up */
+    if (st.status.lastError) return;        /* still failing */
+    storeError = null;
+  }
+
+  /* The write is debounced and then deferred to an idle callback, so the state
+     change arrives before the attempt it caused. One late look settles it.
+     Armed only from a state change, never from inside its own callback, so
+     this stays a single pending timer and not a poll. */
+  function watchRecovery() {
+    if (!storeError || recoverTimer !== null) return;
+    recoverTimer = global.setTimeout(function () {
+      recoverTimer = null;
+      if (!storeError) return;
+      syncStoreError();
+      if (!storeError) safe(drawBands);
+    }, RECOVER_MS);
+  }
+
   function drawBands() {
     var host = hostBefore("moon-bands");
     if (!host) return;
@@ -678,6 +742,19 @@
        state:change or lang:change is just another call. */
     safe(function () { view.render(host); });
 
+    /* The sample month has to announce itself wherever the reader is standing.
+       Living only in the Data section meant someone could read a panel full of
+       invented numbers with nothing on screen saying so. The view owns the
+       strip's wording and its clear action; mounting it on every route is the
+       router's job, after the view has drawn and cleared the host. */
+    safe(function () {
+      var data = Moon.Views && Moon.Views.data;
+      if (!data || typeof data.sampleNotice !== "function") return;
+      if (row.hash === DATA_HASH) return;   /* that section prints its own */
+      var strip = data.sampleNotice();
+      if (strip) host.insertBefore(strip, host.firstChild);
+    });
+
     if (changed) {
       setSheet(false);
       if (!firstPaint) {
@@ -733,7 +810,9 @@
   function refresh() {
     trackToday();
     syncControls();
+    syncStoreError();
     drawBands();
+    watchRecovery();
     drawNudge();
     if (route) mount(route);
   }

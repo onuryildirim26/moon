@@ -12,6 +12,10 @@
  *     day heads over twelve results read worse than a flat list.
  *   - G5: inside a heavy day (or anywhere in the flat list) every fifth row
  *     carries a guide line, the way a log table does.
+ *   - One tab stop for the whole list. Three hundred rows must not put nine
+ *     hundred stops between the filter bar and the total, so every control a
+ *     row holds is tabindex="-1" and the keyboard walks the list with the
+ *     arrows instead (see "row keyboard map" below).
  *
  * The view never writes to Moon.Store; every mutation goes through Moon.Model,
  * and every user-visible string comes from Moon.I18n. render() is idempotent:
@@ -33,20 +37,6 @@
   var NOTE_MAX = 200;       /* the model truncates there too                  */
   var SEARCH_WAIT = 90;     /* ms — "instant" without redrawing on every key  */
   var UNDO_SECONDS = 8;     /* G12                                            */
-
-  /* The three margin marks (G6) share one 28px column, so a row can print
-     only one. A row waiting for confirmation is the only one of the three that
-     asks the reader to do something, so it wins. */
-  var MARK_ORDER = ["unconfirmed", "over", "recurring"];
-
-  /* ui.js asks the catalogue for "a11y.mark.over"; the catalogue spells it
-     "a11y.markOver". Repaired per mark below rather than in ui.js, which this
-     agent does not own. */
-  var MARK_SR = {
-    over: "a11y.markOver",
-    recurring: "a11y.markRecurring",
-    unconfirmed: "a11y.markUnconfirmed"
-  };
 
   /* ------------------------------------------------------------ view state */
 
@@ -78,6 +68,14 @@
     if (key === null || key === undefined) return "";
     if (!I18n || typeof I18n.t !== "function") return String(key);
     return I18n.t(key, params);
+  }
+
+  /* Not every sentence this view would like exists in the catalogue yet, and a
+     missing key must never reach the page as its own name. */
+  function has(key) {
+    var I18n = Moon.I18n;
+    if (!I18n || typeof I18n.has !== "function") return false;
+    return I18n.has(key) === true;
   }
 
   /* Two finished sentences with a space between them. Nothing here builds a
@@ -232,6 +230,9 @@
     });
   }
 
+  /* The three margin marks (G6) share one 28px column, so a row can print only
+     one, and this order is the rule: a row waiting for confirmation is the only
+     one of the three that asks the reader to do something, so it wins. */
   function markKindFor(entry, overSet) {
     if (entry.confirmed === false) return "unconfirmed";
     if (entry.categoryId && overSet[entry.categoryId] && directionOf(entry) === "out") return "over";
@@ -241,6 +242,9 @@
 
   /* ----------------------------------------------------------------- parts */
 
+  /* UI.mark already prints the translated sentence into its own .sr span
+     (ui.js MARKS: a11y.markOver / markRecurring / markUnconfirmed), so the
+     only thing left here is the two class hooks moon.css keys off. */
   function markNode(kind) {
     var UI = Moon.UI;
     var node = UI && typeof UI.mark === "function" ? UI.mark(kind) : null;
@@ -249,16 +253,19 @@
       node.classList.add("ledger-row__mark");
       node.classList.add("is-" + kind);
     }
-    var sr = dom.qs(".sr", node);
-    if (sr) sr.textContent = t(MARK_SR[kind]);
     return node;
   }
 
+  /* tabindex="-1": the list is ONE tab stop (the roving row), so nothing
+     inside a row may add a stop of its own — sixty rows would otherwise put
+     246 stops between the filter bar and the total. The strip is reached with
+     ArrowRight from the row and left with ArrowLeft/Escape (onLedgerKey). */
   function iconButton(glyph, labelKey, onClick) {
     var label = t(labelKey);
     var node = dom.el("button", {
       "class": "btn is-quiet ledger-row__action",
       type: "button",
+      tabindex: "-1",
       title: label,
       "aria-label": label
     }, dom.el("span", { "aria-hidden": "true" }, glyph));
@@ -293,6 +300,10 @@
     var pick = dom.el("input", {
       "class": "ledger-row__pick",
       type: "checkbox",
+      /* Out of the tab order for the same reason as the action buttons: the
+         keyboard reaches it as Space on the row itself (onLedgerKey), and a
+         screen reader still reads and toggles it through the row. */
+      tabindex: "-1",
       /* The accessible name is the row's own data, not a phrase to translate. */
       "aria-label": String(entry.note || "").trim() || name
     });
@@ -300,7 +311,9 @@
     pick.addEventListener("change", function () {
       if (pick.checked) selected[entry.id] = true;
       else delete selected[entry.id];
-      refreshList();
+      /* The list is rebuilt under the pointer, so the row gets the focus back
+         instead of it falling to <body>. */
+      redrawKeepingFocus();
     });
 
     var cat = dom.el("span", { "class": "ledger-row__cat", title: name }, [
@@ -387,6 +400,143 @@
     });
 
     return frag;
+  }
+
+  /* ------------------------------------------------------ row keyboard map
+
+     Moon.UI.rovingList owns the vertical axis (ArrowUp/Down/Home/End, Enter to
+     edit, Delete to remove) and only ever fires while the focus sits on the row
+     element itself. Everything a row holds is out of the tab order, so this
+     handler owns the rest of the contract:
+
+       Space        toggle this row's selection
+       ArrowRight   step into the action strip (edit / copy / delete)
+       ArrowLeft    back out of the strip, or move inside it
+       Home / End   first / last action
+       Escape       back to the row
+       ArrowUp/Down leave the strip and keep moving through the list
+
+     The strip is display:none in the flat list, on a phone and on paper, and a
+     hidden button is not a keyboard target — there the arrow simply does
+     nothing and Enter/Delete still carry the two real actions. */
+
+  function visible(node) {
+    if (!node) return false;
+    if (node.offsetParent === null) return false;
+    return true;
+  }
+
+  function rowActions(row) {
+    return dom.qsa(".ledger-row__action", row).filter(visible);
+  }
+
+  function allRows() {
+    return listHost ? dom.qsa("[data-row]", listHost) : [];
+  }
+
+  function focusRow(row) {
+    if (row && typeof row.focus === "function") row.focus();
+  }
+
+  /* refreshList() throws the rows away and builds new ones, so whoever was
+     standing on a row has to be put back on it. */
+  function redrawKeepingFocus() {
+    var index = roving && typeof roving.index === "function" ? roving.index() : rowIndex;
+    refreshList();
+    if (roving && typeof roving.focus === "function") roving.focus(index);
+  }
+
+  function toggleSelection(row) {
+    var id = row && row.dataset ? row.dataset.id : null;
+    if (!id) return;
+    if (selected[id]) delete selected[id];
+    else selected[id] = true;
+    redrawKeepingFocus();
+  }
+
+  function leaveStrip(row, delta) {
+    var rows = allRows();
+    var index = rows.indexOf(row);
+    if (!delta || index === -1 || !roving || typeof roving.focus !== "function") {
+      focusRow(row);
+      return;
+    }
+    roving.focus(index + delta);
+  }
+
+  function onActionKey(event, row, action) {
+    var items = rowActions(row);
+    var at = items.indexOf(action);
+    if (at === -1) return;
+
+    switch (event.key) {
+      case "ArrowRight":
+        items[Math.min(at + 1, items.length - 1)].focus();
+        break;
+      case "ArrowLeft":
+        if (at === 0) leaveStrip(row, 0);
+        else items[at - 1].focus();
+        break;
+      case "Home":
+        items[0].focus();
+        break;
+      case "End":
+        items[items.length - 1].focus();
+        break;
+      case "Escape":
+        leaveStrip(row, 0);
+        break;
+      case "ArrowUp":
+        leaveStrip(row, -1);
+        break;
+      case "ArrowDown":
+        leaveStrip(row, 1);
+        break;
+      default:
+        return;
+    }
+    event.preventDefault();
+  }
+
+  function onLedgerKey(event) {
+    if (event.ctrlKey || event.metaKey || event.altKey) return;
+    var target = event.target;
+    if (!target || typeof target.closest !== "function") return;
+
+    var row = target.closest("[data-row]");
+    if (!row) return;
+
+    var action = target.closest(".ledger-row__action");
+    if (action) {
+      onActionKey(event, row, action);
+      return;
+    }
+
+    /* A control the pointer put the focus into owns its own keys. */
+    if (target !== row) return;
+
+    /* " " on a modern browser, "Spacebar" on the ones that never updated. */
+    if (event.key === " " || event.key === "Spacebar") {
+      event.preventDefault();
+      toggleSelection(row);
+      return;
+    }
+
+    if (event.key === "ArrowRight") {
+      var items = rowActions(row);
+      if (!items.length) return;
+      event.preventDefault();
+      items[0].focus();
+    }
+  }
+
+  /* One line of text, once, above the list — the keys are worth nothing if
+     nobody is told about them. Printed only when the catalogue carries the
+     sentence, so a key this agent asked for but has not been handed yet shows
+     up as nothing rather than as its own name. */
+  function keyHint() {
+    if (!has("ledger.keys")) return null;
+    return dom.el("p", { "class": "sm dim", text: t("ledger.keys") });
   }
 
   /* ---------------------------------------------------------------- notices */
@@ -662,8 +812,13 @@
     if (dense) classes.push("is-dense");
     if (flat) classes.push("is-flat");
 
+    var hint = keyHint();
+    if (hint) listHost.appendChild(hint);
+
     var ledger = dom.el("div", { "class": classes.join(" ") });
     ledger.appendChild(dayGroups(rows, flat, overCategories(period)));
+    /* The node is thrown away on every redraw, so the listener goes with it. */
+    ledger.addEventListener("keydown", onLedgerKey, false);
     listHost.appendChild(ledger);
 
     listHost.appendChild(dom.el("p", {

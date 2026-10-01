@@ -117,6 +117,34 @@ stored. `toISOString().slice(0, 10)` shifts an entry typed at 02:30 in Istanbul 
 and `new Date("2026-03-01")` is parsed as UTC. Comparing ISO strings sorts chronologically
 and takes time zones out of the equation entirely.
 
+### Adding a language
+
+No string lives in a view, so the catalogue is the one place a third language has to touch.
+German, for example:
+
+1. Copy `js/lang.en.js` to `js/lang.de.js`, rename its one assignment from `Moon.Lang.en`
+   to `Moon.Lang.de`, and translate the values. Keep the keys and their order, and keep
+   every `{placeholder}` — `{count}` left out of a sentence shows up on screen as a literal
+   brace.
+2. Add one script tag to `index.html`, **after** `js/i18n.js`, because the next step calls it:
+
+   ```html
+   <script src="js/lang.de.js"></script>
+   ```
+3. End the new file with the registration:
+
+   ```js
+   Moon.I18n.register("de", Moon.Lang.de);
+   ```
+
+That is all of it. The language picker in the header builds itself from
+`Moon.I18n.languages()`, so `DE` appears beside `TR` and `EN` on the next reload. A key you
+have not translated yet falls back to English and says so in the console rather than
+rendering blank, and `Moon.I18n._verify()` lists every missing key and every placeholder
+that drifted between catalogues. Amounts and dates are not translated: they are formatted by
+`Intl` from the code you registered, so `"de"` already groups thousands with a dot and marks
+the decimal with a comma.
+
 ## Accessibility
 
 Keyboard reachable throughout, with a visible focus ring that is never removed. Ledger rows
@@ -130,6 +158,14 @@ same time. One polite live region, at the bottom of the page, for undo and warni
 Current Chrome, Edge, Firefox and Safari, on desktop and phone. Nothing here needs a
 polyfill; the newest things used are `<dialog>`, `content-visibility` and `TextDecoder`,
 each with a fallback path.
+
+## Support
+
+Moon is free and MIT licensed. Nothing to pay, no account to open, nothing withheld — and
+that is not going to change. If you would like to send something anyway, the **Sponsor**
+button at the top of this repository is the shortest route. It buys nothing: there is no
+feature behind it, no banner to remove, no advertisement you are not seeing. The app itself
+never asks for money anywhere.
 
 ## Licence
 
@@ -209,6 +245,41 @@ Sonra `index.html` dosyasına çift tıkla. Kurulum bundan ibaret. Moon bilerek 
 Denemek için `ornek/` klasöründe iki örnek ekstre var: `ornek-ekstre-tr.csv` ve
 `sample-statement-en.csv`. Uygulamanın içinde de hazır bir örnek ay var — bir tuşla yüklenir,
 bir tuşla temizlenir.
+
+## Dil eklemek
+
+Hiçbir metin görünümlerin içinde durmaz; üçüncü bir dilin dokunacağı tek yer katalog.
+Örnek olarak Almanca:
+
+1. `js/lang.en.js` dosyasını `js/lang.de.js` olarak kopyala, içindeki tek atamayı
+   `Moon.Lang.en`'den `Moon.Lang.de`'ye al, sonra değerleri çevir. Anahtarları ve sıralarını
+   koru; `{yer tutucu}` işaretlerini de — cümleden düşen bir `{count}` ekranda süslü
+   parantezin kendisi olarak görünür.
+2. `index.html`'e tek bir script satırı ekle; bir sonraki adım onu çağırdığı için
+   **`js/i18n.js`'ten sonra** olacak:
+
+   ```html
+   <script src="js/lang.de.js"></script>
+   ```
+3. Yeni dosyanın sonuna kaydı yaz:
+
+   ```js
+   Moon.I18n.register("de", Moon.Lang.de);
+   ```
+
+Hepsi bu. Başlıktaki dil seçici kendini `Moon.I18n.languages()` üzerinden kurar, yani `DE`
+bir sonraki açılışta `TR` ve `EN`'in yanında belirir. Henüz çevirmediğin bir anahtar boş
+kalmaz, İngilizcesine düşer ve bunu konsolda söyler; `Moon.I18n._verify()` da eksik
+anahtarları ve kataloglar arasında kayan yer tutucuları sıralar. Tutar ve tarih biçimi
+katalogda değil: kaydettiğin dil kodundan `Intl` ile kurulur, yani `"de"` binlikleri noktayla,
+ondalığı virgülle yazar.
+
+## Destek olmak
+
+Moon ücretsiz ve MIT lisanslı; hiçbir şey ödemeden, hesap açmadan, bir şey sormadan
+kullanılır ve öyle kalacak. Yine de bir şey göndermek istersen en kısa yol bu deponun en
+üstündeki **Sponsor** düğmesi. Bir karşılığı yok: açılmayan özellik, kapanmayan bant,
+görmediğin bir reklam yok. Uygulamanın kendisi hiçbir yerde para istemez.
 
 ## Lisans
 

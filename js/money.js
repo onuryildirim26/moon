@@ -50,14 +50,18 @@
   }
 
   /* A broken record must not poison a sum with NaN, so anything unusable
-     reads as zero and anything out of range is clamped rather than dropped. */
+     reads as zero and anything out of range is clamped rather than dropped.
+     Negative zero is folded onto positive zero on the way in: Math.round(-0.5)
+     is -0, and -0 reads as "not negative" to a `< 0` test while still printing
+     its sign through String(), which puts a stray minus inside the .m-whole
+     column of the amount grid instead of in .m-sign. */
   function toMinor(value) {
     var n = typeof value === "number" ? value : Number(value);
     if (!isFinite(n)) return 0;
     n = Math.round(n);
     if (n > MAX_SAFE) return MAX_SAFE;
     if (n < -MAX_SAFE) return -MAX_SAFE;
-    return n;
+    return n === 0 ? 0 : n;
   }
 
   function occurrences(text, ch) {
@@ -354,7 +358,8 @@
       var w = toMinor(whole);
       if (w === 0) return null;
       var result = Math.round(toMinor(part) / w * 100);
-      return isFinite(result) ? result : null;
+      if (!isFinite(result)) return null;
+      return result === 0 ? 0 : result;      /* never -0 (see toMinor) */
     },
 
     /* Math.round, not banker's rounding (spec §4). A zero or unusable
@@ -362,7 +367,10 @@
     divRound: function (minor, n) {
       var count = typeof n === "number" ? n : Number(n);
       if (!isFinite(count) || count === 0) return 0;
-      return Math.round(toMinor(minor) / count);
+      /* Rounding runs on the quotient, so the guard in toMinor cannot see it:
+         Math.round(-0.5) is -0 and that sign leaks into the amount grid. */
+      var result = Math.round(toMinor(minor) / count);
+      return result === 0 ? 0 : result;
     },
 
     /* ------------------------------------------------------------ selftest
@@ -473,6 +481,15 @@
       eq("parts.cents pad", parts(5, { lang: "tr" }).cents, "05");
       eq("parts.whole zero", parts(5, { lang: "tr" }).whole, "0");
       eq("parts.broken input", parts(undefined, { lang: "tr" }).whole, "0");
+
+      /* Negative zero prints as zero: no minus anywhere, least of all in the
+         whole column (see toMinor). */
+      eq("parts.negative zero whole", parts(-0, { lang: "tr" }).whole, "0");
+      eq("parts.negative zero sign", parts(-0, { lang: "tr" }).sign, "");
+      looseEq("format negative zero", format(-0, { currency: "TRY", lang: "tr" }), "0,00 ₺");
+      eq("divRound no negative zero", Object.is(Moon.Money.divRound(-1, 2), -0), false);
+      eq("parts of divRound(-1,2)", parts(Moon.Money.divRound(-1, 2), { lang: "tr" }).whole, "0");
+      eq("add no negative zero", Object.is(Moon.Money.add(-0, -0), -0), false);
 
       eq("add", Moon.Money.add(1, 2, 3), 6);
       eq("add empty", Moon.Money.add(), 0);

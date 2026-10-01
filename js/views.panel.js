@@ -296,6 +296,32 @@
     });
   }
 
+  /* The trace's twin. It is the one chart whose table sits inside the strip, so
+     two things are true at once: it arrives shut, which costs the strip a
+     single 13px summary row (A11 watches the strip's height), and the sentence
+     that explains the trace rides inside it instead of taking a line of its
+     own. Print opens .numbers, so paper gets the sentence and the thirty days
+     the trace draws — which is the whole point of the twin. */
+  function trailNumbers(trail) {
+    var node = numbers(
+      [
+        { labelKey: "ledger.col.date", type: "date" },
+        { labelKey: "ledger.col.amount", type: "money" }
+      ],
+      trail.map(function (point) {
+        return [point.date, Number(point && point.perDay) || 0];
+      }),
+      "panel.chart.trail.title"
+    );
+
+    var body = dom.el("p", { "class": "sm dim", text: t("panel.chart.trail.body") });
+    /* Before applyCssHooks runs, so the class is still ui.js's own name. */
+    var table = node.querySelector ? node.querySelector(".datatable__table") : null;
+    if (table) node.insertBefore(body, table);
+    else node.appendChild(body);
+    return node;
+  }
+
   /* ------------------------------------------------------------------- hero */
 
   function heroAside(periodKey, progress) {
@@ -382,10 +408,18 @@
     return out;
   }
 
-  /* Returns the trace plus, on a wide screen, the one line of text the chart
-     writes its reading into. The line opens on the latest day rather than
-     empty, so a focusable chart is never a dead end and the strip never shows
-     a blank row waiting to be used. */
+  /* Returns the trace, the one line of text the chart writes its reading into,
+     and the table that carries the same numbers.
+
+     The reading line is printed at every width. charts.js gives every trace a
+     tabindex and binds the arrow keys whatever size it is drawn at (E4 has no
+     switch for that, and charts.js is not this agent's file), so dropping the
+     line on a phone left a focus stop that moved a cursor and said nothing —
+     a silent trap for anyone on a keyboard, a switch or an external keyboard.
+     One 13px line costs the strip less than a dead stop costs the reader.
+
+     The line opens on the latest day rather than empty, so a focusable chart is
+     never a dead end and the strip never shows a blank row waiting to be used. */
   function trailNodes(periodKey, allowance) {
     var trail = safe(function () { return Moon.Model.allowanceTrail(periodKey); }, []) || [];
     /* With no limits there is no allowance to trace, and the invitation takes
@@ -393,7 +427,7 @@
     if (allowance.state === "noLimits") return [];
 
     var size = narrow() ? TRAIL_NARROW : TRAIL;
-    var read = narrow() ? null : readoutLine();
+    var read = readoutLine();
     var min = null;
     var max = null;
     var reference = null;
@@ -416,20 +450,19 @@
         reference: money(reference || 0)
       }),
       emptyText: t("empty.panel.body"),
-      onReadout: read
-        ? function (index) {
-            var point = trail[index];
-            if (point) setReadout(read, point.date, point.perDay);
-          }
-        : null
+      onReadout: function (index) {
+        var point = trail[index];
+        if (point) setReadout(read, point.date, point.perDay);
+      }
     }));
 
     var out = [dom.el("div", { "class": "hero__trail" }, svgNode(markup, "chart--trail"))];
-    if (read) {
-      var last = trail.length ? trail[trail.length - 1] : null;
-      if (last) setReadout(read, last.date, last.perDay);
-      out.push(read);
-    }
+    var last = trail.length ? trail[trail.length - 1] : null;
+    if (last) setReadout(read, last.date, last.perDay);
+    out.push(read);
+    /* No days, no table: the trace already prints its own empty sentence, and
+       a "show the numbers" row that opens on nothing is a worse answer. */
+    if (trail.length) out.push(trailNumbers(trail));
     return out;
   }
 

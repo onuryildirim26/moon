@@ -1051,8 +1051,11 @@
     return "moon-yedek-" + today() + ".json";
   }
 
+  /* `dropped` and `repaired` come from normalize and are part of every answer,
+     zero included: a caller that only prints the rows it got would otherwise
+     have no way to learn that the file held more. */
   function emptyCounts() {
-    var counts = { skipped: 0, mergedCategories: 0 };
+    var counts = { skipped: 0, mergedCategories: 0, dropped: 0, repaired: 0 };
     COLLECTIONS.forEach(function (spec) {
       counts[spec.name] = 0;
     });
@@ -1082,12 +1085,30 @@
     }
 
     var lang = activeLang();
-    var incoming = normalize(stepped.data, lang).state;
+    var normalized = normalize(stepped.data, lang);
+    var incoming = normalized.state;
+    var report = normalized.report || { repaired: 0, dropped: 0, structural: 0 };
+
+    /* Rows normalize could not read are gone from `incoming`, so counting what
+       arrived says nothing about what the file held. Carry the report out: the
+       reader has to be told "N records could not be read", especially in
+       replace mode, where their own data is on the way out. */
+    counts.dropped = (isInt(report.dropped) ? report.dropped : 0) +
+      (isInt(report.structural) ? report.structural : 0);
+    counts.repaired = isInt(report.repaired) ? report.repaired : 0;
 
     if (mode === "replace") {
       COLLECTIONS.forEach(function (spec) {
         counts[spec.name] = incoming[spec.name].length;
       });
+      /* Replace deletes everything the reader has, and `counts.dropped` above
+         says the file that takes its place may hold less. Flush whatever is
+         still sitting in the write debounce and force a copy of the whole of
+         it under the backup key, so the loss is recoverable instead of final.
+         Forced, because persistNow's own snapshot is once per session and may
+         already have been spent on an older state. */
+      persistNow();
+      takeSessionBackup(true);
       var written = update(function (draft) {
         Object.keys(draft).forEach(function (key) {
           delete draft[key];
@@ -1195,6 +1216,15 @@
     backend.remove(KEY);
     backend.remove(BACKUP_KEY);
     backend.remove(PROBE_KEY);
+
+    /* "Erase everything" has to include the block quarantine() set aside, or a
+       reader who arrived through a corrupt boot still carries it: usage() keeps
+       counting those bytes, so the one way out of a full quota frees nothing,
+       and no section of the app can show or remove them. */
+    backend.keys().forEach(function (key) {
+      if (typeof key === "string" && key.indexOf(CORRUPT_PREFIX) === 0) backend.remove(key);
+    });
+    session.quarantined = [];
     session.backupTaken = true;
 
     /* Another tab still holds the records in memory, and the union in
@@ -1223,6 +1253,37 @@
 
     persist(true);
     emit("state:change", { reason: "data:wipe" });
+  }
+
+  /* The blocks quarantine() set aside, newest key last. data.error.corrupt
+     promises the reader their unreadable data was kept rather than deleted;
+     without a way to list and read it that promise is empty, so the Data
+     section can offer the raw text as a download. */
+  function quarantinedBlocks() {
+    return backend.keys().filter(function (key) {
+      return typeof key === "string" && key.indexOf(CORRUPT_PREFIX) === 0;
+    }).sort().map(function (key) {
+      var value = backend.get(key);
+      return { key: key, bytes: typeof value === "string" ? value.length : 0 };
+    });
+  }
+
+  /* The raw bytes of one quarantined block, or null. Never parsed: the point of
+     the copy is that it could not be read. */
+  function readQuarantined(key) {
+    if (typeof key !== "string" || key.indexOf(CORRUPT_PREFIX) !== 0) return null;
+    var value = backend.get(key);
+    return typeof value === "string" ? value : null;
+  }
+
+  function dropQuarantined(key) {
+    if (typeof key !== "string" || key.indexOf(CORRUPT_PREFIX) !== 0) return false;
+    if (backend.get(key) === null) return false;
+    backend.remove(key);
+    session.quarantined = session.quarantined.filter(function (held) {
+      return held !== key;
+    });
+    return true;
   }
 
   /* Rough storage footprint for the Data section's usage meter. */
@@ -1256,7 +1317,10 @@
     exportFilename: exportFilename,
     importJson: importJson,
     wipe: wipe,
-    usage: usage
+    usage: usage,
+    quarantinedBlocks: quarantinedBlocks,
+    readQuarantined: readQuarantined,
+    dropQuarantined: dropQuarantined
   };
 
   /* A getter, not a field: the state object is replaced on every update and a
@@ -1656,6 +1720,53 @@
         assert(JSON.stringify(serialize(state)) === snapshot, "state must be untouched");
       });
 
+      /* 14b — rows normalize could not read are counted, not swallowed, and a
+               replace keeps the reader's own data under the backup key. */
+      check("import: unreadable rows are reported, replace keeps a copy", function () {
+        testStorage = makeShim();
+        boot();
+        update(function (draft) {
+          draft.entries.push({
+            id: "e_mine", date: "2026-09-15", amount: 999, direction: "out",
+            categoryId: draft.categories[0].id, note: "READER ROW"
+          });
+        }, { immediate: true });
+
+        var file = JSON.stringify({
+          schemaVersion: SCHEMA_VERSION,
+          createdAt: "2026-09-01",
+          settings: { lang: "tr", currency: "TRY", monthStartDay: 1 },
+          categories: [{ id: "c_x", name: "X", kind: "expense", fixed: false, archived: false }],
+          entries: [
+            { id: "e_ok", date: "2026-09-10", amount: 1000, direction: "out", categoryId: "c_x" },
+            /* amount as a decimal string and a d/m/Y date: neither survives
+               normalize, and both used to vanish without a word. */
+            { id: "e_bad1", date: "2026-09-10", amount: "12.50", direction: "out", categoryId: "c_x" },
+            { id: "e_bad2", date: "10/09/2026", amount: 2000, direction: "out", categoryId: "c_x" }
+          ],
+          limits: [], recurring: [], goals: [], debts: []
+        });
+
+        var tap = listen();
+        var out = importJson(file, { mode: "replace" });
+        tap.stop();
+        assert(out.ok === true, "a mostly-readable file still imports");
+        assert(out.counts.entries === 1, "one row arrived, got " + out.counts.entries);
+        assert(out.counts.dropped === 2, "two rows were lost, got " + out.counts.dropped);
+        var kept = testStorage.raw[BACKUP_KEY];
+        assert(!!kept && kept.indexOf("READER ROW") !== -1,
+          "replace must leave the reader's data under the backup key");
+
+        /* A clean round trip reports nothing lost. */
+        testStorage = makeShim();
+        boot();
+        var clean = importJson(exportJson(), { mode: "merge" });
+        assert(clean.counts.dropped === 0 && clean.counts.repaired === 0,
+          "a file we wrote ourselves needs no repair");
+        assert(importJson("not json", { mode: "merge" }).counts.dropped === 0,
+          "a refused file reports the empty shape");
+      });
+
       /* 15 — wipe */
       check("wipe: keys removed, defaults installed, preferences kept", function () {
         testStorage = makeShim();
@@ -1672,6 +1783,30 @@
         assert(state.settings.theme === "paper" && state.settings.currency === "EUR", "preferences kept");
         assert(state.settings.changesSinceBackup === 0, "counter reset");
         assert(stored(testStorage).entries.length === 0, "the fresh state is persisted");
+      });
+
+      /* 15b — "erase everything" has to include the quarantined block, and
+                until it does the Data section can read and download it. */
+      check("wipe: the quarantined block goes too", function () {
+        testStorage = makeShim({ "moon.v1": "{half written and quite long" });
+        boot();
+        var blocks = quarantinedBlocks();
+        assert(blocks.length === 1, "boot should have set one block aside");
+        assert(blocks[0].bytes === "{half written and quite long".length, "byte count");
+        assert(readQuarantined(blocks[0].key) === "{half written and quite long",
+          "the raw bytes must be readable, that is the whole promise");
+        assert(readQuarantined(KEY) === null, "only quarantine keys are readable this way");
+        assert(dropQuarantined(KEY) === false, "and only they can be dropped");
+        var before = usage();
+        assert(before.bytes > 0, "the block counts against storage");
+
+        wipe();
+        assert(quarantinedBlocks().length === 0, "wipe must take the block as well");
+        assert(session.quarantined.length === 0, "and forget it");
+        assert(Object.keys(testStorage.raw).filter(function (key) {
+          return key.indexOf(CORRUPT_PREFIX) === 0;
+        }).length === 0, "no corrupt key may survive an erase");
+        assert(usage().keys.length === 1, "only the live key is left, got " + usage().keys.length);
       });
 
       /* 16 — storage refused entirely */
