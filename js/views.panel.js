@@ -489,12 +489,6 @@
     if (reading.body) kids.push(line(reading.body));
     if (reading.action) kids.push(dom.el("p", { "class": "hero__line" }, reading.action));
 
-    /* The narrow strip earns its height back by dropping the two lines that
-       repeat what the sections below say anyway (A11). */
-    if (!narrow() && summary.entryCount) {
-      kids.push(line(t("panel.entryCount", { count: summary.entryCount }), true));
-    }
-
     /* Today's reading only exists while the period holds today and there is an
        allowance to have a remainder of. */
     if (allowance.perDayLeftToday !== null && allowance.perDayLeftToday !== undefined) {
@@ -522,7 +516,12 @@
       }), true));
     }
 
-    var drop = narrow() ? null : dropLine();
+    /* The strip stays a drop target whatever it says (G11), but the sentence
+       announcing that is only worth its line while the ledger is still thin.
+       Once a month of entries is in, it is the reader who has the fewest lines
+       to read that can see the measurement, so the hint steps back and the
+       dashed outline on dragover does the telling. */
+    var drop = (narrow() || summary.entryCount > 8) ? null : dropLine();
     if (drop) kids.push(drop);
 
     var node = Moon.UI.hero({ children: kids, onFiles: onFiles });

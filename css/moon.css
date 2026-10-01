@@ -1018,6 +1018,21 @@ input[type="radio"] {
   color: var(--ink-dim);
 }
 
+/* The header select wears the same frame as the buttons beside it, so the row
+   reads as one instrument rather than a form dropped into a toolbar. */
+.picker__select {
+  min-height: 36px;
+  padding: 0 var(--s2);
+  background: none;
+  color: var(--ink);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  font: inherit;
+  font-size: var(--t-sm);
+  font-weight: 500;
+  cursor: pointer;
+}
+
 .picker > button.is-active {
   color: var(--ink);
   border-color: var(--rule-strong);

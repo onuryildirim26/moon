@@ -282,26 +282,6 @@
     }, el("span", { "aria-hidden": "true" }, glyph));
   }
 
-  function currencyButton(code) {
-    return el("button", {
-      type: "button",
-      title: code,
-      "aria-pressed": "false",
-      dataset: { currency: code },
-      on: {
-        click: function () {
-          if (CURRENCIES.indexOf(code) === -1) return;
-          if (settings().currency === code) return;
-          writeSetting({ currency: code }, "settings:currency");
-        }
-      }
-    }, [
-      /* The symbol is the visible mark; the ISO code is the accessible name,
-         because "₺" is a glyph and "TRY" is the word for it. */
-      el("span", { "aria-hidden": "true" }, symbolOf(code)),
-      el("span", { "class": "sr" }, code)
-    ]);
-  }
 
   function langButton(code) {
     var key = "common.lang." + code;
@@ -357,17 +337,35 @@
       ctl.period = periodHost;
     }
 
+    /* One select rather than four buttons. The currency is set once and then
+       left alone, so spending four slots of permanent chrome on it crowds the
+       period — the control the reader actually moves — and the same choice is
+       already a select down in Settings. */
     var currencyHost = doc.getElementById("currency-control");
     if (currencyHost) {
       dom.clear(currencyHost);
-      currencyHost.setAttribute("role", "group");
-      currencyHost.setAttribute("aria-label", t("common.currency"));
+      currencyHost.removeAttribute("role");
+      currencyHost.removeAttribute("aria-label");
       currencyHost.setAttribute("data-i18n-group", "common.currency");
-      CURRENCIES.forEach(function (code) {
-        var node = currencyButton(code);
-        ctl.currency.push(node);
-        currencyHost.appendChild(node);
+
+      var currencySelect = el("select", {
+        "class": "picker__select",
+        "aria-label": t("common.currency")
       });
+      CURRENCIES.forEach(function (code) {
+        currencySelect.appendChild(el("option", {
+          value: code,
+          selected: code === settings().currency ? true : null
+        }, Moon.Money.symbol(code) + " " + code));
+      });
+      currencySelect.addEventListener("change", function () {
+        var code = currencySelect.value;
+        if (CURRENCIES.indexOf(code) === -1) return;
+        if (settings().currency === code) return;
+        writeSetting({ currency: code }, "settings:currency");
+      });
+      ctl.currency.push(currencySelect);
+      currencyHost.appendChild(currencySelect);
     }
 
     var langHost = doc.getElementById("lang-control");
@@ -413,6 +411,11 @@
 
     var currency = settings().currency;
     ctl.currency.forEach(function (node) {
+      if (node.tagName === "SELECT") {
+        if (node.value !== currency) node.value = currency;
+        node.setAttribute("aria-label", t("common.currency"));
+        return;
+      }
       var on = node.dataset.currency === currency;
       setClass(node, "is-active", on);
       node.setAttribute("aria-pressed", on ? "true" : "false");
