@@ -157,6 +157,9 @@
     /* --------------------------------------------------------- ledger ---- */
 
     "ledger.title": "Defter",
+    "ledger.detail.created": "Yazıldığı an",
+    "ledger.detail.mark": "Kenar işareti",
+    "ledger.detail.source": "Kaynağı",
     "ledger.keys": "Listede yukarı ve aşağı ok tuşlarıyla gezin: Boşluk satırı seçer, Enter düzenler, Delete siler, sağ ok satırın eylemlerine girer.",
     "ledger.filter.search": "Ara",
     "ledger.filter.search.hint": "Açıklama ve kategori içinde arar.",
@@ -214,6 +217,18 @@
     /* --------------------------------------------------------- limits ---- */
 
     "limits.title": "Limitler",
+    "limits.category.archive": "Arşivle",
+    "limits.category.unarchive": "Arşivden çıkar",
+    "limits.category.removed": "{name} silindi, {count} kayıt Diğer'e taşındı.",
+    "limits.category.removed.one": "{name} silindi, {count} kayıt Diğer'e taşındı.",
+    "limits.category.removed.other": "{name} silindi, {count} kayıt Diğer'e taşındı.",
+    "limits.drift.ahead": "{amount} önde",
+    "limits.drift.behind": "{amount} geride",
+    "limits.drift.over": "{amount} aştın",
+    "limits.drift.done": "tamamı ödendi",
+    "limits.fixed.note": "Sabit giderler günlük pay havuzunda değil; ayrı tutulur.",
+    "limits.year.title": "Yıl ızgarası",
+    "limits.year.key": "Yoğunluk",
     "limits.suggest.title": "Limitleri verinden öner",
     "limits.suggest.empty": "Kapanmış dönemlerinde önerebileceğim bir harcama bulamadım.",
     "limits.suggest.basis.one": "{count} tam dönem, {entries} kayıt okundu. İçinde bulunduğun dönem sayılmadı.",
@@ -296,6 +311,7 @@
     /* ---------------------------------------------------------- goals ---- */
 
     "goals.title": "Hedefler",
+    "goals.form.saved": "Baştaki birikim",
     "goals.form.title.new": "Hedef yaz",
     "goals.form.title.edit": "Hedefi düzenle",
     "goals.form.target": "Hedef tutar",

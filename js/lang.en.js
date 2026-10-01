@@ -148,6 +148,9 @@
     /* --------------------------------------------------------- ledger ---- */
 
     "ledger.title": "Ledger",
+    "ledger.detail.created": "Written at",
+    "ledger.detail.mark": "Margin mark",
+    "ledger.detail.source": "Came from",
     "ledger.keys": "Move through the list with the up and down arrows: Space selects a row, Enter edits it, Delete removes it, and the right arrow steps into the row's actions.",
     "ledger.filter.search": "Search",
     "ledger.filter.search.hint": "Looks inside notes and category names.",
@@ -205,6 +208,18 @@
     /* --------------------------------------------------------- limits ---- */
 
     "limits.title": "Limits",
+    "limits.category.archive": "Archive",
+    "limits.category.unarchive": "Unarchive",
+    "limits.category.removed": "{name} deleted, {count} entries moved to Other.",
+    "limits.category.removed.one": "{name} deleted, {count} entry moved to Other.",
+    "limits.category.removed.other": "{name} deleted, {count} entries moved to Other.",
+    "limits.drift.ahead": "{amount} ahead",
+    "limits.drift.behind": "{amount} behind",
+    "limits.drift.over": "{amount} over",
+    "limits.drift.done": "fully paid",
+    "limits.fixed.note": "Fixed costs are held out of the daily-allowance pool.",
+    "limits.year.title": "The year",
+    "limits.year.key": "Density",
     "limits.suggest.title": "Suggest limits from your data",
     "limits.suggest.empty": "I found nothing in your closed periods to suggest a limit from.",
     "limits.suggest.basis.one": "Read {count} complete period, {entries} entries. The period in progress was left out.",
@@ -287,6 +302,7 @@
     /* ---------------------------------------------------------- goals ---- */
 
     "goals.title": "Goals",
+    "goals.form.saved": "Already saved",
     "goals.form.title.new": "Add a goal",
     "goals.form.title.edit": "Edit the goal",
     "goals.form.target": "Target amount",
