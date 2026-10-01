@@ -21,6 +21,8 @@
   var KEY = "moon.v1";
   var BACKUP_KEY = "moon.v1.bak";
   var PROBE_KEY = "moon.probe";
+  /* Written only by wipe(), read only by other tabs. See wipe(). */
+  var WIPE_KEY = "moon.v1.wiped";
   var CORRUPT_PREFIX = "moon.v1.corrupt.";
   var SCHEMA_VERSION = 1;
   var WRITE_DELAY = 250;
@@ -575,6 +577,7 @@
   /* ------------------------------------------------------------ module state */
 
   var state = null;
+  var wipeStamp = null;
   var backend = memoryBackend();
   var testStorage = null;
   var unloadBound = false;
@@ -750,7 +753,28 @@
      typed but not yet saved is flushed first, so the merge direction is "both
      writes land", not "newest tab wins". */
   function adoptForeignWrite(event) {
-    if (!event || event.key !== KEY || !state) return;
+    if (!event || !state) return;
+
+    /* Another tab erased everything. That is an instruction, not a write to be
+       merged: drop what this tab holds and follow it. */
+    if (event.key === WIPE_KEY) {
+      if (!event.newValue || event.newValue === wipeStamp) return;
+      wipeStamp = event.newValue;
+      cancelIdle();
+      writeSoon.cancel();
+      var raw = backend.get(KEY);
+      var fresh = null;
+      if (raw) {
+        try {
+          fresh = normalize(JSON.parse(raw), activeLang());
+        } catch (error) { fresh = null; }
+      }
+      state = fresh && fresh.state ? fresh.state : defaultState(activeLang());
+      emit("state:change", { reason: "storage:wiped" });
+      return;
+    }
+
+    if (event.key !== KEY) return;
     if (event.newValue === null || event.newValue === undefined) return;
 
     var adopted;
@@ -944,6 +968,7 @@
     writeSoon.cancel();
 
     backend = probe.ok ? localBackend(ls) : memoryBackend(readSeed(ls));
+    wipeStamp = backend.get(WIPE_KEY) || null;
     bindUnload();
 
     var lang = activeLang();
@@ -1171,6 +1196,17 @@
     backend.remove(BACKUP_KEY);
     backend.remove(PROBE_KEY);
     session.backupTaken = true;
+
+    /* Another tab still holds the records in memory, and the union in
+       adoptForeignWrite would hand them back on its next save — "erase
+       everything" would quietly undo itself. This stamp travels as its own key
+       so the schema stays as the contract describes it; a tab that sees it
+       newer than the one it booted with drops what it holds instead of
+       rescuing it. */
+    wipeStamp = String(Date.now());
+    try {
+      backend.set(WIPE_KEY, wipeStamp);
+    } catch (error) { /* read-only session: the wipe is local to this tab */ }
 
     var lang = previous && previous.lang === "en" ? "en" : (previous && previous.lang === "tr" ? "tr" : activeLang());
     state = defaultState(lang);
