@@ -594,8 +594,23 @@
     "csv.role.credit": "Alacak",
     "csv.role.category": "Kategori",
     "csv.role.confidence": "%{pct} okunabildi",
+
+    /* The import no longer stops to ask which column holds the date: the roles
+       are inferred from the data and the preview opens straight away. These
+       keys are the words that step needs — one line of account for the guess,
+       the control that reopens the mapping step when the guess is wrong, and
+       the count of page lines that were never transactions. The last one is
+       kept deliberately flat: an interest-rate table left out of an import is
+       a fact about the statement, not a fault of the reader's, so it must not
+       read like a warning. */
+    "csv.roles.guessed": "Sütunları kendim çıkardım ve {count} satır okudum. Yanlış tuttuğum bir sütun varsa düzeltebilirsin.",
+    "csv.roles.fix": "Sütunları düzelt",
+    "csv.rows.skipped.one": "Sayfadaki {count} satır işlem değil — faiz tablosu, toplam, adres gibi — dışarıda kaldı.",
+    "csv.rows.skipped.other": "Sayfadaki {count} satır işlem değil — faiz tablosu, toplam, adres gibi — dışarıda kaldı.",
+
     "csv.signRule": "İşaret kuralı",
     "csv.signRule.negativeIsExpense": "Eksi olanlar gider",
+    "csv.signRule.positiveIsExpense": "Artı olanlar gider (kredi kartı)",
     "csv.signRule.debitCredit": "Borç ve alacak ayrı sütunda",
     "csv.defaultCategory": "Varsayılan kategori",
     "csv.defaultCategory.hint": "Kategorisi okunamayan satırlar buraya yazılır.",
@@ -631,9 +646,23 @@
     "pdf.err.notPdf": "Bu dosya PDF gibi okunmadı. Bankanın verdiği özgün dosyayı seç; yeniden kaydedilmiş ya da yarım inmiş olabilir.",
     "pdf.err.encrypted": "Bu PDF parolalı. Parolayı bilen bir programda açıp parolasız olarak kaydet, sonra tekrar dene.",
     "pdf.err.noText": "Bu PDF'in içinde metin yok, yalnızca sayfanın görüntüsü var — taranmış ya da fotoğraflanmış bir ekstre böyle gelir. Bankanın sitesinden CSV ya da metin içeren PDF indirebilirsen onu okuyabilirim.",
+    /* Separate from pdf.err.noText because the cause and the cure are both
+       different: such a page does carry a little text — a title, a card line —
+       so the file never looks empty, and it usually came out of a phone
+       banking app that draws the statement as a picture. Naming web banking
+       and CSV gives the reader somewhere to go in one step. The word "hata"
+       stays out of it, because nothing they did was wrong. */
+    "pdf.err.scanned": "Bu PDF'in sayfası bir resim: içinde okunacak metin yok denecek kadar az. Telefondaki bankacılık uygulamasından indirilen ekstre ya da taranmış bir kâğıt genelde böyle gelir. Aynı ekstre bankanın internet şubesinde çoğu zaman CSV ya da metin içeren PDF olarak da duruyor; ikisini de okuyabilirim.",
     "pdf.warn.fewRows": "Bu PDF'ten yalnızca birkaç satır çıkarabildim. Aşağıdaki önizleme eksikse bankanın CSV dosyası daha güvenilir olur.",
     "pdf.reading": "PDF okunuyor…",
     "pdf.read.summary": "{pages} sayfadan {lines} satır okundu.",
+    /* A statement is read twice over — once off the page's column grid, once
+       line by line looking for a date next to an amount — and the better of
+       the two wins. The small print under the preview says which one won,
+       because that is the first thing worth knowing when a column looks
+       wrong, and the reader has no console to ask. */
+    "pdf.read.table": "Sütunlar sayfadaki hizalardan çıkarıldı.",
+    "pdf.read.lines": "Her satırda tarih ve tutar arandı.",
     "pdf.note": "PDF'teki sütunlar yazıların yerinden çıkarılır, ayraçtan değil. Yazmadan önce aşağıdaki satırlara bir bak.",
     "csv.step1.acceptPdf": "Kabul edilen: .csv, .txt ve .pdf",
     "csv.err.encodingGuess": "Türkçe harfler bozuk görünüyor, kodlamayı tahminle seçtim. Yanlışsa kodlamayı elle değiştir.",

@@ -69,9 +69,29 @@ test("a printed statement reads back as a table", async () => {
   /* Array.from: the reader builds its arrays inside the vm, so they carry that
      realm's Array.prototype and a strict deep compare against a host array
      fails on identical contents. */
-  assert.deepEqual(Array.from(result.headers), ["Tarih", "Aciklam a", "Tutar", "Bakiye"],
+  assert.deepEqual(Array.from(result.headers), ["Tarih", "Aciklama", "Tutar", "Bakiye"],
     "the header line is found under the bank's own preamble");
   assert.equal(result.rows.length, 14, "every statement line comes back");
+
+  /* This page is printed at a fractional type size, so every glyph is
+     positioned on its own and "Aciklama" arrives as eight runs. Whether a gap
+     between two of them is a word space or nothing at all is decided against
+     the width of the glyph before it, and the m of "Aciklam|a" is the widest
+     letter in the word: while that width was a single median guessed for the
+     whole page, the m was estimated too narrow, the gap after it read as a
+     space, and the header came back as "Aciklam a". The widths now come out of
+     the font, so the word is one word. */
+  assert.equal(result.headers[1].indexOf(" "), -1,
+    "a measured glyph width puts no space inside a word");
+
+  /* What the reader now reports about the page itself, which is what the
+     preview tells the reader in place of asking a question. */
+  assert.equal(result.pass, "table", "the page's own grid produced these rows");
+  assert.equal(result.passKey, "pdf.read.table");
+  assert.equal(result.usable, 14, "every row carries both a date and an amount");
+  assert.equal(result.lines, 17, "the raw text lines of the page, not the table's rows");
+  assert.equal(result.pages, 1, "one /Type /Page object, however many streams it took");
+  assert.equal(result.skipped, 3, "the bank's name, the preamble and the header");
 
   /* Rows in the order they were printed, not the order the file stored them:
      a printer is free to hand down a flipped axis and this one does. */
@@ -170,7 +190,8 @@ test("an encrypted PDF asks for a copy without a password", async () => {
 test("every message the reader can produce has a sentence behind it", () => {
   const Moon = load();
   for (const key of ["pdf.err.notPdf", "pdf.err.encrypted", "pdf.err.noText",
-    "pdf.warn.fewRows", "csv.err.tooBig", "csv.err.readFailed"]) {
+    "pdf.err.scanned", "pdf.warn.fewRows", "pdf.read.table", "pdf.read.lines",
+    "pdf.read.summary", "csv.err.tooBig", "csv.err.readFailed"]) {
     assert.ok(Moon.I18n.has(key), `${key} has no sentence in the catalogue`);
   }
 });

@@ -585,8 +585,23 @@
     "csv.role.credit": "Credit",
     "csv.role.category": "Category",
     "csv.role.confidence": "{pct}% could be read",
+
+    /* The import no longer stops to ask which column holds the date: the roles
+       are inferred from the data and the preview opens straight away. These
+       keys are the words that step needs — one line of account for the guess,
+       the control that reopens the mapping step when the guess is wrong, and
+       the count of page lines that were never transactions. The last one is
+       kept deliberately flat: an interest-rate table left out of an import is
+       a fact about the statement, not a fault of the reader's, so it must not
+       read like a warning. */
+    "csv.roles.guessed": "I worked the columns out myself and read {count} rows. If I got one wrong you can fix it.",
+    "csv.roles.fix": "Fix the columns",
+    "csv.rows.skipped.one": "{count} line on the page was not a transaction — a rate table, a total, an address — and was left out.",
+    "csv.rows.skipped.other": "{count} lines on the page were not transactions — rate tables, totals, addresses — and were left out.",
+
     "csv.signRule": "Sign rule",
     "csv.signRule.negativeIsExpense": "Negative means expense",
+    "csv.signRule.positiveIsExpense": "Positive means expense (a credit card)",
     "csv.signRule.debitCredit": "Debit and credit in separate columns",
     "csv.defaultCategory": "Default category",
     "csv.defaultCategory.hint": "Rows whose category cannot be read land here.",
@@ -622,9 +637,23 @@
     "pdf.err.notPdf": "This file did not read as a PDF. Pick the original the bank gave you; it may have been re-saved or downloaded only partly.",
     "pdf.err.encrypted": "This PDF is password protected. Open it where the password is known, save a copy without one, and try again.",
     "pdf.err.noText": "There is no text inside this PDF, only a picture of the page — that is how a scanned or photographed statement arrives. If your bank offers a CSV, or a PDF with real text in it, I can read that.",
+    /* Separate from pdf.err.noText because the cause and the cure are both
+       different: such a page does carry a little text — a title, a card line —
+       so the file never looks empty, and it usually came out of a phone
+       banking app that draws the statement as a picture. Naming web banking
+       and CSV gives the reader somewhere to go in one step. No word for
+       "error" appears in it, because nothing they did was wrong. */
+    "pdf.err.scanned": "This PDF's page is a picture: there is almost no text in it to read. A statement saved from a phone banking app, or a scanned sheet of paper, usually arrives like this. The same statement is nearly always in your bank's web banking as a CSV or as a PDF with real text in it, and I read both.",
     "pdf.warn.fewRows": "Only a few rows came out of this PDF. If the preview below looks short, the bank's CSV will be more reliable.",
     "pdf.reading": "Reading the PDF…",
     "pdf.read.summary": "Read {lines} lines from {pages} pages.",
+    /* A statement is read twice over — once off the page's column grid, once
+       line by line looking for a date next to an amount — and the better of
+       the two wins. The small print under the preview says which one won,
+       because that is the first thing worth knowing when a column looks
+       wrong, and the reader has no console to ask. */
+    "pdf.read.table": "Columns taken from the page's own grid.",
+    "pdf.read.lines": "Each line read for a date and an amount.",
     "pdf.note": "Columns in a PDF are worked out from where the words sit, not from a delimiter. Have a look at the rows below before anything is written.",
     "csv.step1.acceptPdf": "Accepted: .csv, .txt and .pdf",
     "csv.err.encodingGuess": "The accented letters look broken, so I guessed the encoding. Set it by hand if the guess is wrong.",

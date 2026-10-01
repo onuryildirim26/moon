@@ -75,6 +75,13 @@
   var focusWant = null;        /* null | "step" | "role:<index>" */
   var focusNode = null;        /* set during the draw, used at the end of it */
 
+  /* The three ways a statement can carry direction. "positiveIsExpense" is the
+     credit-card reading: its amount column lists what the card spent, so an
+     unsigned figure is money going out and the negatives are the payments that
+     reduced the debt. Listed here once so the picker, the guess and the write
+     cannot drift apart on what a valid rule is. */
+  var SIGN_RULES = ["negativeIsExpense", "positiveIsExpense", "debitCredit"];
+
   function freshWizard() {
     return {
       step: 1,
@@ -98,7 +105,20 @@
       built: null,
       defaultCategoryId: null,
       skipLines: null,         /* null until the first build fills the defaults */
-      written: null            /* {count} after step 4 */
+      written: null,           /* {count} after step 4 */
+
+      /* The PDF road's own figures, kept here rather than read back off the
+         result so that a language switch mid-wizard redraws from module state
+         like everything else. */
+      pdf: false,
+      pdfPages: 0,
+      pdfLines: 0,
+      pdfSkipped: 0,
+      pdfPassKey: null,
+
+      /* True while the reader has never opened the mapping step: the columns
+         were worked out and accepted, and the review says so. */
+      autoRoles: false
     };
   }
 
@@ -546,7 +566,7 @@
       wiz.encoding = result.encoding || "utf-8";
       wiz.warnings = result.warnings || [];
       reparse({ reguess: true });
-      goToStep(2);
+      goToStep(landingStep(wiz.guess));
       redraw();
     }, function (error) {
       var key = error && error.key ? error.key : "csv.err.readFailed";
@@ -577,6 +597,11 @@
       wiz.warnings = (result.warnings || []).slice();
       wiz.pdfPages = result.pages || 0;
       wiz.pdfLines = result.lines || 0;
+      wiz.pdfSkipped = typeof result.skipped === "number" ? result.skipped : 0;
+      /* Only the reader's own two names are shown, so a key that arrived from
+         anywhere else cannot reach t() and print itself at the reader. */
+      wiz.pdfPassKey = result.passKey === "pdf.read.lines" || result.passKey === "pdf.read.table"
+        ? result.passKey : null;
 
       /* No delimiter and no header row to choose: the geometry already
          answered both, so those controls have nothing to offer here. */
@@ -587,27 +612,20 @@
         issues: [],
         delimiter: null,
         headerRow: 0,
-        columnCount: (result.headers || []).length
+        columnCount: (result.headers || []).length,
+        /* Carried across because the sign rule depends on it and only the
+           reader saw the whole page. A card lists what it spent as a positive
+           figure, so losing this here reads a month of shopping as a month of
+           income — and every figure the app reports then says the opposite of
+           the truth, with nothing on screen looking wrong. */
+        documentKind: result.documentKind || null
       };
 
       /* Same role guessing as a CSV gets, minus the delimiter it has no use
          for: the headers and rows reaching it are the same shape either way. */
-      var Importer = Moon.Importer;
-      var guess = (Importer && typeof Importer.guessRoles === "function")
-        ? Importer.guessRoles(wiz.parsed.headers, wiz.parsed.rows)
-        : null;
-      wiz.guess = guess;
-      wiz.colRoles = rolesFrom(guess, columnCount());
-      if (guess) {
-        wiz.dateOrder = guess.dateOrder === "mdy" ? "mdy" : "dmy";
-        wiz.decimal = guess.decimal === "." ? "." : ",";
-        wiz.signRule = guess.signRule === "debitCredit" ? "debitCredit" : "negativeIsExpense";
-      }
-      if (!wiz.defaultCategoryId) wiz.defaultCategoryId = defaultCategoryGuess();
-      wiz.built = null;
-      wiz.skipLines = null;
+      applyGuess();
 
-      goToStep(2);
+      goToStep(landingStep(wiz.guess));
       redraw();
     }, function (error) {
       wiz.busy = false;
@@ -660,21 +678,7 @@
       return;
     }
 
-    if (options.reguess) {
-      var Importer = Moon.Importer;
-      var guess = null;
-      if (Importer && typeof Importer.guessRoles === "function") {
-        guess = Importer.guessRoles(wiz.parsed.headers, wiz.parsed.rows, { delimiter: wiz.delimiter });
-      }
-      wiz.guess = guess;
-      wiz.colRoles = rolesFrom(guess, columnCount());
-      if (guess) {
-        wiz.dateOrder = guess.dateOrder === "mdy" ? "mdy" : "dmy";
-        wiz.decimal = guess.decimal === "." ? "." : ",";
-        wiz.signRule = guess.signRule === "debitCredit" ? "debitCredit" : "negativeIsExpense";
-      }
-      if (!wiz.defaultCategoryId) wiz.defaultCategoryId = defaultCategoryGuess();
-    }
+    if (options.reguess) applyGuess({ delimiter: wiz.delimiter });
     /* Any of these invalidates the review: the drafts and the per-row duplicate
        decisions were made against a table that no longer exists. */
     wiz.built = null;
@@ -701,6 +705,62 @@
     return cols;
   }
 
+  /* Asks the importer what the columns mean and takes the answer whole.
+     The answer includes the table the role numbers are indices into, which is
+     not always the table that went in: the importer drops the lines that are
+     not transactions, and splits a column whose date was glued to the text
+     beside it. Keeping the old table here while using the new numbers would put
+     the amount role one column to the left of the amounts, so the table comes
+     with them. */
+  function applyGuess(opts) {
+    var Importer = Moon.Importer;
+    var guess = null;
+    if (!wiz.parsed) return null;
+    if (Importer && typeof Importer.guessRoles === "function") {
+      guess = Importer.guessRoles(wiz.parsed.headers, wiz.parsed.rows, {
+        delimiter: (opts && opts.delimiter) || null,
+        rowLines: wiz.parsed.rowLines || null,
+        /* A card writes what it spent as a positive figure and an account
+           writes the same money with a minus, so the sign rule cannot be read
+           from the columns alone. Only the PDF reader saw the whole page, and
+           only the whole page says which document this is. */
+        documentKind: wiz.parsed.documentKind || null
+      });
+    }
+    wiz.guess = guess;
+
+    if (guess && guess.table && guess.table.rows !== wiz.parsed.rows) {
+      wiz.parsed.headers = guess.table.headers;
+      wiz.parsed.rows = guess.table.rows;
+      if (guess.table.rowLines) wiz.parsed.rowLines = guess.table.rowLines;
+      wiz.parsed.columnCount = columnCount();
+    }
+
+    wiz.colRoles = rolesFrom(guess, columnCount());
+    if (guess) {
+      wiz.dateOrder = guess.dateOrder === "mdy" ? "mdy" : "dmy";
+      wiz.decimal = guess.decimal === "." ? "." : ",";
+      wiz.signRule = SIGN_RULES.indexOf(guess.signRule) === -1
+        ? "negativeIsExpense" : guess.signRule;
+    }
+    if (!wiz.defaultCategoryId) wiz.defaultCategoryId = defaultCategoryGuess();
+    wiz.built = null;
+    wiz.skipLines = null;
+    return guess;
+  }
+
+  /* The question the owner should never have been asked. When the columns came
+     back confident — a date, an amount, and rows that actually build into
+     drafts — the mapping step has nothing to ask about, so the wizard goes
+     straight to the review and says there what it worked out. */
+  function landingStep(guess) {
+    if (!guess || !guess.confident) return 2;
+    var built = ensureBuilt();
+    if (!built || built.error || !(built.summary && built.summary.ok > 0)) return 2;
+    wiz.autoRoles = true;
+    return 3;
+  }
+
   function mapping() {
     var map = {
       date: null, note: null, amount: null, debit: null, credit: null, category: null,
@@ -722,6 +782,9 @@
     wiz.colRoles[index] = role;
     wiz.built = null;
     wiz.skipLines = null;
+    /* The columns are the reader's now, so the review stops claiming it worked
+       them out on its own. */
+    wiz.autoRoles = false;
     /* The redraw below replaces this very select; bring the reader back to it
        instead of dropping them at the top of the document. */
     wantFocus("role:" + index);
@@ -1026,17 +1089,24 @@
       value: wiz.signRule,
       options: [
         { value: "negativeIsExpense", labelKey: "csv.signRule.negativeIsExpense" },
+        { value: "positiveIsExpense", labelKey: "csv.signRule.positiveIsExpense" },
         { value: "debitCredit", labelKey: "csv.signRule.debitCredit" }
       ],
       onChange: function (value) {
-        wiz.signRule = value === "debitCredit" ? "debitCredit" : "negativeIsExpense";
+        wiz.signRule = SIGN_RULES.indexOf(value) === -1 ? "negativeIsExpense" : value;
         wiz.built = null;
         wiz.skipLines = null;
         redraw();
       }
     });
 
-    rows.push(el("div", { "class": "form__row" }, [delimiterField, encodingField, headerField]));
+    /* A PDF has no delimiter, no encoding and no header row to choose: the
+       geometry answered all three. Offering the controls anyway is worse than
+       useless, because each of them re-parses `wiz.text` — which is empty on
+       this road — and that throws away the table the page reader found. */
+    if (!wiz.pdf) {
+      rows.push(el("div", { "class": "form__row" }, [delimiterField, encodingField, headerField]));
+    }
     rows.push(el("div", { "class": "form__row" }, [orderField, decimalField, signField]));
     return rows;
   }
@@ -1302,6 +1372,46 @@
     return count;
   }
 
+  /* How many lines were left out of the table altogether. On the PDF road the
+     page reader has already counted every line of the page that was not a
+     transaction, and the rows the importer then dropped are inside that count,
+     so the two must not be added together. On the CSV road the importer's own
+     count is the whole story. */
+  function skippedLines() {
+    if (wiz.pdf) return wiz.pdfSkipped || 0;
+    return (wiz.guess && wiz.guess.dropped) || 0;
+  }
+
+  /* What the wizard worked out on its own, said out loud. This is the whole
+     point of the review opening without a question first: the reader is told
+     what was decided for them, how many rows came of it, what was left on the
+     page and how the page was read, and the control that reopens the columns
+     is right there if any of it is wrong. */
+  function guessNotes(built) {
+    var out = [];
+    var summary = built.summary || {};
+
+    if (wiz.autoRoles) {
+      /* The mapping step was never shown, and it is where the decoding and
+         few-rows warnings normally appear. They belong to the file, not to the
+         step, so they are repeated here rather than silently skipped. */
+      (wiz.warnings || []).forEach(function (key) {
+        out.push(band({ kind: "warn", messageKey: key }));
+      });
+      out.push(prose(t("csv.roles.guessed", { count: summary.ok || 0 })));
+    }
+
+    var skipped = skippedLines();
+    if (skipped > 0) out.push(small(t("csv.rows.skipped", { count: skipped })));
+
+    /* How the page was read, in one short line. The reader's own figures for
+       pages and lines are deliberately NOT repeated here: the sentence below
+       already counts the rows, and pdf.read.summary has no singular form, so a
+       one-page statement would be told it was read "from 1 pages". */
+    if (wiz.pdfPassKey) out.push(small(t(wiz.pdfPassKey)));
+    return out;
+  }
+
   /* One sentence, one arithmetic: read = importable + duplicate + skipped. */
   function summarySentence(built) {
     var summary = built.summary || {};
@@ -1327,6 +1437,10 @@
       body.push(band({ kind: "warn", messageKey: built.error }));
       return body;
     }
+
+    guessNotes(built).forEach(function (node) {
+      body.push(node);
+    });
 
     var summary = built.summary || {};
     var lines = el("div", { "class": "form__summary" });
@@ -1396,10 +1510,22 @@
     var list = [];
 
     if (wiz.step > 1 && !wiz.written) {
-      list.push(button(t("csv.back"), "quiet", function () {
-        goToStep(wiz.step - 1);
-        redraw();
-      }));
+      if (wiz.step === 3 && wiz.autoRoles) {
+        /* The reader never saw the mapping step, so "back" would name a place
+           they have not been. This is the same door under the name that says
+           what is behind it — and it is the only thing standing between an
+           automatic read and a reader who disagrees with it. */
+        list.push(button(t("csv.roles.fix"), "quiet", function () {
+          wiz.autoRoles = false;
+          goToStep(2);
+          redraw();
+        }));
+      } else {
+        list.push(button(t("csv.back"), "quiet", function () {
+          goToStep(wiz.step - 1);
+          redraw();
+        }));
+      }
     }
 
     if (wiz.step === 2) {
