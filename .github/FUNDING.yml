@@ -3,15 +3,11 @@
 # the page makes no request to any payment host.
 #
 # Each line is a platform GitHub already knows, so no link is published from
-# here that GitHub cannot resolve. Uncomment a line only once the handle on it
-# is real: an unknown handle is skipped silently and the button simply does not
-# appear, which looks the same as a mistake.
-#
-# github: needs a one-time enrolment in GitHub Sponsors (github.com/sponsors),
-# and is the lightest option for a reader who is already signed in to GitHub.
-# github: [onuryildirim26]
+# here that GitHub cannot resolve. An unknown handle is skipped silently and
+# the button simply does not appear, which looks the same as a mistake.
+buy_me_a_coffee: onuryildirim26
 
-# buy_me_a_coffee: takes nothing but the username from your own page's address
-# — buymeacoffee.com/<username> — and needs no GitHub enrolment at all. Fill it
-# in and drop the "#" to add a second button.
-# buy_me_a_coffee: <username>
+# github: needs a one-time enrolment at github.com/sponsors and takes no cut,
+# where Buy Me a Coffee keeps 5%. Enrol, then drop the "#" to add a second
+# button beside the first.
+# github: [onuryildirim26]
