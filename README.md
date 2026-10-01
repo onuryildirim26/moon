@@ -162,9 +162,10 @@ each with a fallback path.
 ## Support
 
 Moon is free and MIT licensed. Nothing to pay, no account to open, nothing withheld — and
-that is not going to change. If a donation link ever appears at the top of this repository,
-it buys nothing: there is no feature behind it, no banner to remove, no advertisement you
-are not seeing. The app itself never asks for money anywhere, and never will.
+that is not going to change. If it saved you an evening and you would like to send
+something, there is a [coffee](https://buymeacoffee.com/onuryildirim26). It buys nothing:
+no feature behind it, no banner to remove, no advertisement you are not seeing. The app
+itself never asks for money anywhere, and never will.
 
 ## Licence
 
@@ -276,9 +277,10 @@ ondalığı virgülle yazar.
 ## Destek olmak
 
 Moon ücretsiz ve MIT lisanslı; hiçbir şey ödemeden, hesap açmadan, bir şey sormadan
-kullanılır ve öyle kalacak. Deponun üstünde bir bağış bağlantısı görürsen, bir karşılığı
-yok: açılmayan özellik, kapanmayan bant, görmediğin bir reklam yok. Uygulamanın kendisi
-hiçbir yerde para istemez, istemeyecek.
+kullanılır ve öyle kalacak. Bir akşamını kurtardıysa ve bir şey göndermek istersen bir
+[kahve](https://buymeacoffee.com/onuryildirim26) var. Bir karşılığı yok: açılmayan özellik,
+kapanmayan bant, görmediğin bir reklam yok. Uygulamanın kendisi hiçbir yerde para istemez,
+istemeyecek.
 
 ## Lisans
 
