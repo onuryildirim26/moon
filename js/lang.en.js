@@ -44,6 +44,10 @@
 
     "common.save": "Save",
     "common.cancel": "Cancel",
+    "common.more": "More",
+    "common.details": "Details",
+    "common.notSaved": "The change was not saved; the old value is back.",
+    "limits.edit": "Change the period limit: {amount}",
     "common.delete": "Delete",
     "common.edit": "Edit",
     "common.copy": "Duplicate",

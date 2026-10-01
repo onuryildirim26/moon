@@ -1,8 +1,21 @@
 /* Moon — the ledger view (#defter).
  *
- * Three hundred rows have to stay readable, so this file spends its structure
- * on the three decisions the design brief makes (00-tasarim.md, "Harcama
- * listesi"):
+ * This is the screen that gets used sixty times a month, so the whole file is
+ * built around one sentence from sadeleştirme §3: writing an entry must cost
+ * one line of typing, and changing one must cost no more than that.
+ *
+ *   - No dialog. A permanent quickRow sits at the head of the list (date,
+ *     amount, category, note) and Enter in any field saves and parks the caret
+ *     back on the amount, with the date and the category kept — a run of
+ *     grocery entries is one field each.
+ *   - Clicking a row, or Enter on it, turns THAT row into the same quickRow in
+ *     place. Enter saves, Esc gives up. The direction, the fixed mark and the
+ *     row's provenance live one quiet toggle away, inside that row's own sheet.
+ *   - Deleting asks nothing. It deletes and leaves the eight-second undo strip
+ *     (G12); asking first and then offering undo is asking twice.
+ *
+ * The three decisions the design brief makes about the list itself still hold
+ * (00-tasarim.md, "Harcama listesi"):
  *
  *   - Day groups, not row lines. One 1px rule between days instead of one per
  *     row; each group is its own container so the `content-visibility: auto`
@@ -15,7 +28,15 @@
  *   - One tab stop for the whole list. Three hundred rows must not put nine
  *     hundred stops between the filter bar and the total, so every control a
  *     row holds is tabindex="-1" and the keyboard walks the list with the
- *     arrows instead (see "row keyboard map" below).
+ *     arrows instead (see "row keyboard map" below). The open edit row is the
+ *     one exception and it is a deliberate one: its fields are what the reader
+ *     is typing into, and it folds back into a single row the moment it closes.
+ *
+ * Because the router redraws this view on every state:change — asynchronously,
+ * one tick after a save (app.js schedule()) — a redraw must not throw the caret
+ * on the floor. snapshot()/applyRestore() below carry the half-typed row and
+ * the focused control across every rebuild, which is what makes "Enter, type,
+ * Enter" actually work instead of merely looking like it does.
  *
  * The view never writes to Moon.Store; every mutation goes through Moon.Model,
  * and every user-visible string comes from Moon.I18n. render() is idempotent:
@@ -30,6 +51,7 @@
 
   var util = Moon.util;
   var dom = Moon.dom;
+  var doc = global.document;
 
   var FLAT_MAX = 20;        /* A12: below this a filtered list goes flat      */
   var GUIDE_STEP = 5;       /* G5                                             */
@@ -37,6 +59,26 @@
   var NOTE_MAX = 200;       /* the model truncates there too                  */
   var SEARCH_WAIT = 90;     /* ms — "instant" without redrawing on every key  */
   var UNDO_SECONDS = 8;     /* G12                                            */
+
+  /* Every quickRow gets its own memory key: the head row and the row being
+     edited remember their own "more" sheet, so opening the sheet to set a
+     direction once does not unfold it on the other one for the rest of the
+     session. */
+  var QUICK_MEMORY = "ledger.quick";
+  var EDIT_MEMORY = "ledger.edit";
+
+  var SOURCE_KEYS = {
+    manual: "ledger.filter.source.manual",
+    csv: "ledger.filter.source.csv",
+    recurring: "ledger.filter.source.recurring",
+    sample: "ledger.filter.source.sample"
+  };
+
+  var MARK_KEYS = {
+    over: "a11y.markOver",
+    recurring: "a11y.markRecurring",
+    unconfirmed: "a11y.markUnconfirmed"
+  };
 
   /* ------------------------------------------------------------ view state */
 
@@ -50,13 +92,32 @@
 
   /* "Write one more" — the date and the category of the last saved entry come
      back as the defaults, because entries arrive in runs. */
-  var lastUsed = { date: null, categoryId: null, direction: "out" };
+  var lastUsed = { date: null, categoryId: null };
+
+  /* Which row is open for editing, and the half-typed contents of both rows,
+     carried across the redraws the router fires underneath us. */
+  var editingId = null;
+  var quickDraft = null;
+  var editDraft = null;
+  var restore = null;
+
+  /* The direction and the fixed mark normally FOLLOW the category (an income
+     category makes an income entry), and stop following it the moment the
+     reader sets one by hand. One flag each, per open row.
+     Untouched, the mark is left out of the draft entirely and Moon.Model
+     answers it — see buildDraft. */
+  var quickTouch = { direction: false, fixed: false };
+  var editTouch = { direction: false, fixed: false };
+
+  var quickApi = null;
+  var editApi = null;
 
   var rowIndex = 0;
   var roving = null;
   var host = null;          /* the element render() was handed, for redraws   */
   var clearButton = null;
   var listHost = null;
+  var quickHost = null;
   var asideNode = null;
   var noticeHost = null;
   var debouncedSearch = null;
@@ -141,19 +202,6 @@
     return Dates.weekdayShort(date, lang());
   }
 
-  /* moon.css and ui.js disagree on a handful of class names (ui.js emits
-     BEM-style modifiers, the stylesheet keys off .is-* state classes). The
-     view bridges them here instead of leaving unstyled nodes on the page. */
-  function alias(root, from, to) {
-    if (!root) return root;
-    dom.qsa("." + from, root).forEach(function (node) {
-      to.split(" ").forEach(function (name) {
-        if (node.classList) node.classList.add(name);
-      });
-    });
-    return root;
-  }
-
   function directionOf(entry) {
     return entry && entry.direction === "in" ? "in" : "out";
   }
@@ -215,10 +263,26 @@
     return set;
   }
 
+  function entryById(id) {
+    var Model = Moon.Model;
+    if (!id || !Model || typeof Model.entries !== "function") return null;
+    var all = Model.entries({}) || [];
+    for (var i = 0; i < all.length; i += 1) {
+      if (all[i].id === id) return all[i];
+    }
+    return null;
+  }
+
   function categoryName(id) {
     var Model = Moon.Model;
     if (Model && typeof Model.categoryName === "function") return Model.categoryName(id);
     return t("common.unclassified");
+  }
+
+  function categoryById(id) {
+    var Model = Moon.Model;
+    if (!id || !Model || typeof Model.categoryById !== "function") return null;
+    return Model.categoryById(id) || null;
   }
 
   function categoryOptions(kind) {
@@ -230,6 +294,33 @@
     });
   }
 
+  /* One list, both kinds, expense first: the entry row has no direction field
+     on screen, so the category IS the direction and the reader must be able to
+     reach "Salary" without opening anything. */
+  function entryCategoryOptions() {
+    return categoryOptions("expense").concat(categoryOptions("income"));
+  }
+
+  function directionForCategory(id) {
+    var cat = categoryById(id);
+    return cat && cat.kind === "income" ? "in" : "out";
+  }
+
+  function fixedForCategory(id) {
+    var cat = categoryById(id);
+    return !!(cat && cat.fixed);
+  }
+
+  function firstCategoryId() {
+    var options = entryCategoryOptions();
+    return options.length ? options[0].value : "";
+  }
+
+  function knownCategory(id) {
+    if (!id) return false;
+    return !!categoryById(id);
+  }
+
   /* The three margin marks (G6) share one 28px column, so a row can print only
      one, and this order is the rule: a row waiting for confirmation is the only
      one of the three that asks the reader to do something, so it wins. */
@@ -238,6 +329,166 @@
     if (entry.categoryId && overSet[entry.categoryId] && directionOf(entry) === "out") return "over";
     if (entry.source === "recurring" || entry.recurringId) return "recurring";
     return null;
+  }
+
+  /* ------------------------------------------------- focus across a redraw
+
+     app.js answers state:change with setTimeout(…, 0) and then re-renders this
+     whole view, so every save is followed one tick later by a rebuild of the
+     very input the reader is typing into. Without this pair, "Enter and keep
+     typing" would lose the caret on every single entry — which is the one thing
+     sadeleştirme §3 asks for. snapshot() reads where the caret is and what has
+     been typed; applyRestore() puts both back. */
+
+  function activeNode() {
+    if (!doc) return null;
+    var node = doc.activeElement;
+    if (!node || node === doc.body || node === doc.documentElement) return null;
+    return node;
+  }
+
+  function caretOf(control) {
+    if (!control) return null;
+    try {
+      if (typeof control.selectionStart !== "number") return null;
+      return { start: control.selectionStart, end: control.selectionEnd };
+    } catch (error) {
+      /* A date or a number input throws on selectionStart in some browsers. */
+      return null;
+    }
+  }
+
+  function fieldNameOf(node) {
+    if (!node || typeof node.closest !== "function") return null;
+    var wrap = node.closest(".field");
+    if (!wrap || !wrap.dataset) return null;
+    return wrap.dataset.field || null;
+  }
+
+  function partOfRow(node, row) {
+    if (node === row) return "row";
+    if (node.classList && node.classList.contains("ledger-row__pick")) return "pick";
+    if (typeof node.closest === "function" && node.closest(".ledger-row__action")) {
+      var items = dom.qsa(".ledger-row__action", row);
+      var at = items.indexOf(node.closest(".ledger-row__action"));
+      if (at !== -1) return "action:" + at;
+    }
+    return "row";
+  }
+
+  /* Raw control values, not parsed ones: a half-typed "1.2" is not a number
+     yet and must survive the rebuild exactly as it was typed. */
+  function draftOf(api) {
+    if (!api || !api.fields) return null;
+    var out = Object.create(null);
+    Object.keys(api.fields).forEach(function (name) {
+      var entry = api.fields[name];
+      if (!entry || !entry.control) return;
+      out[name] = entry.type === "switch"
+        ? !!entry.control.checked
+        : String(entry.control.value === undefined ? "" : entry.control.value);
+    });
+    out["@more"] = typeof api.isMoreOpen === "function" ? api.isMoreOpen() : false;
+    return out;
+  }
+
+  function snapshot() {
+    quickDraft = draftOf(quickApi);
+    editDraft = draftOf(editApi);
+    restore = null;
+
+    var node = activeNode();
+    if (!node || typeof node.closest !== "function") return;
+
+    var form = node.closest(".quickrow");
+    if (form) {
+      var scope = null;
+      if (quickApi && form === quickApi.element) scope = "quick";
+      else if (editApi && form === editApi.element) scope = "edit";
+      if (!scope) return;
+      var name = fieldNameOf(node);
+      var part = name
+        ? null
+        : (node.classList && node.classList.contains("quickrow__more") ? "more" : "submit");
+      restore = { scope: scope, name: name, part: part, caret: caretOf(node) };
+      return;
+    }
+
+    var row = node.closest("[data-row]");
+    if (!row || !row.dataset) return;
+    restore = {
+      scope: "row",
+      id: row.dataset.id || null,
+      part: partOfRow(node, row),
+      index: roving && typeof roving.index === "function" ? roving.index() : rowIndex
+    };
+  }
+
+  function focusControl(control, caret) {
+    if (!control || typeof control.focus !== "function") return false;
+    try {
+      control.focus();
+    } catch (error) {
+      return false;
+    }
+    if (caret && typeof control.setSelectionRange === "function") {
+      try {
+        control.setSelectionRange(caret.start, caret.end);
+      } catch (error) { /* a type that refuses a selection: leave the caret */ }
+    }
+    return true;
+  }
+
+  function restoreInForm(api, want) {
+    if (!api) return false;
+    if (want.name && api.fields && api.fields[want.name]) {
+      var entry = api.fields[want.name];
+      return focusControl(entry.control, want.caret);
+    }
+    var selector = want.part === "more" ? ".quickrow__more" : ".quickrow__submit";
+    return focusControl(dom.qs(selector, api.element), null);
+  }
+
+  function restoreOnRow(want) {
+    if (!listHost) return false;
+    var rows = dom.qsa("[data-row]", listHost);
+    if (!rows.length) return false;
+
+    var at = -1;
+    if (want.id) {
+      for (var i = 0; i < rows.length; i += 1) {
+        if (rows[i].dataset && rows[i].dataset.id === want.id) {
+          at = i;
+          break;
+        }
+      }
+    }
+    /* The row may be gone — it was just deleted. Standing on whatever took its
+       place is kinder than dropping the reader back to <body>. */
+    if (at === -1) at = util.clamp(typeof want.index === "number" ? want.index : 0, 0, rows.length - 1);
+
+    var row = rows[at];
+    if (roving && typeof roving.focus === "function") roving.focus(at);
+    else focusControl(row, null);
+
+    if (want.part === "pick") {
+      var pick = dom.qs(".ledger-row__pick", row);
+      if (pick) return focusControl(pick, null);
+    } else if (want.part && want.part.indexOf("action:") === 0) {
+      var items = dom.qsa(".ledger-row__action", row).filter(onScreen);
+      var index = global.parseInt(want.part.slice(7), 10) || 0;
+      if (items[index]) return focusControl(items[index], null);
+    }
+    return true;
+  }
+
+  function applyRestore() {
+    var want = restore;
+    restore = null;
+    if (!want) return;
+    if (want.scope === "quick") restoreInForm(quickApi, want);
+    else if (want.scope === "edit") restoreInForm(editApi, want);
+    else if (want.scope === "row") restoreOnRow(want);
   }
 
   /* ----------------------------------------------------------------- parts */
@@ -258,7 +509,7 @@
 
   /* tabindex="-1": the list is ONE tab stop (the roving row), so nothing
      inside a row may add a stop of its own — sixty rows would otherwise put
-     246 stops between the filter bar and the total. The strip is reached with
+     180 stops between the filter bar and the total. The strip is reached with
      ArrowRight from the row and left with ArrowLeft/Escape (onLedgerKey). */
   function iconButton(glyph, labelKey, onClick) {
     var label = t(labelKey);
@@ -278,7 +529,8 @@
 
   /* One row. Child order is the grid order moon.css declares: date, category,
      note, actions, amount, mark — the date hides itself outside .is-flat and
-     the actions hide themselves inside it, so no cell has to be left out. */
+     the actions hide themselves inside it, so no cell has to be left out.
+     There is no edit button any more: the row itself is the edit affordance. */
   function rowNode(entry, opts) {
     var classes = ["ledger-row"];
     if (entry.confirmed === false) classes.push("is-unconfirmed");
@@ -308,12 +560,16 @@
       "aria-label": String(entry.note || "").trim() || name
     });
     pick.checked = !!selected[entry.id];
+    /* Selecting is not editing: the click must not also open the row. */
+    pick.addEventListener("click", function (event) {
+      event.stopPropagation();
+    });
     pick.addEventListener("change", function () {
       if (pick.checked) selected[entry.id] = true;
       else delete selected[entry.id];
-      /* The list is rebuilt under the pointer, so the row gets the focus back
-         instead of it falling to <body>. */
-      redrawKeepingFocus();
+      /* The list is rebuilt under the pointer, so the checkbox gets the focus
+         back instead of it falling to <body>. */
+      refreshList();
     });
 
     var cat = dom.el("span", { "class": "ledger-row__cat", title: name }, [
@@ -331,15 +587,16 @@
     }));
 
     /* The space is reserved at all times (moon.css only animates opacity), so
-       hovering a row never nudges the layout. */
+       hovering a row never nudges the layout. Edit is gone from the strip —
+       the row opens on its own click — and what is left is the one action the
+       row cannot express by being clicked and the one that destroys. */
     row.appendChild(dom.el("span", {
       "class": "ledger-row__actions",
       role: "group",
       "aria-label": t("a11y.rowActions")
     }, [
-      iconButton("✎", "ledger.action.edit", function () { openForm(entry); }),
       iconButton("⧉", "ledger.action.copy", function () { copyEntry(entry); }),
-      iconButton("×", "ledger.action.delete", function () { askDelete(entry); })
+      iconButton("×", "ledger.action.delete", function () { deleteEntry(entry); })
     ]));
 
     /* Ledger rows carry no currency symbol (only the hero strip does), and the
@@ -360,6 +617,481 @@
       : dom.el("span", { "class": "ledger-row__mark", "aria-hidden": "true" }));
 
     return row;
+  }
+
+  /* --------------------------------------------------------- the entry row */
+
+  /* The four fields every entry needs, in the order a hand fills them. Values
+     come from the draft that survived the last redraw, then from the last
+     thing saved, then from today. */
+  function entryFieldSpecs(seed, opts) {
+    var options = entryCategoryOptions();
+    var chosen = knownCategory(seed.categoryId) ? seed.categoryId : firstCategoryId();
+
+    return [
+      {
+        name: "date",
+        type: "date",
+        labelKey: "form.date",
+        required: true,
+        value: seed.date || ""
+      },
+      {
+        name: "amount",
+        type: "money",
+        labelKey: "form.amount",
+        hintKey: "form.amount.hint",
+        required: true,
+        currency: currency(),
+        value: seed.amount === null || seed.amount === undefined ? "" : seed.amount
+      },
+      {
+        name: "categoryId",
+        type: "select",
+        /* No `required`: ui.js answers a required <select> with an empty first
+           option, and an empty option on a list of categories is a value the
+           reader can actually pick and then be told off for. A select always
+           has a value, so the flag buys nothing and costs a trap. */
+        labelKey: "form.category",
+        value: chosen,
+        options: options,
+        /* The direction and the fixed mark follow the category until the reader
+           overrules them, and they do it visibly: the sheet is folded, so the
+           only honest thing is to keep what is inside it true. */
+        onChange: function (value) {
+          opts.onCategory(value);
+        }
+      },
+      {
+        name: "note",
+        type: "text",
+        labelKey: "form.note",
+        hintKey: "form.note.hint",
+        params: { max: NOTE_MAX },
+        maxLength: NOTE_MAX,
+        value: seed.note === null || seed.note === undefined ? "" : seed.note
+      }
+    ];
+  }
+
+  /* moon.css clips every .field__label inside an unlabelled quickRow — right
+     for the one-line entry row, wrong for the sheet below it, where a bare
+     select and a bare checkbox would have nothing next to them. The real
+     <label for> stays where it is and keeps carrying the accessible name; this
+     is the same words again, for the eye only, so a screen reader is not told
+     twice. The one inline style is vertical centring against the sheet's
+     `align-items: stretch`, and css/moon.css belongs to another agent. */
+  function caption(labelKey) {
+    var node = dom.el("span", {
+      "class": "sm dim",
+      "aria-hidden": "true",
+      text: t(labelKey)
+    });
+    if (node.style && typeof node.style.setProperty === "function") {
+      node.style.setProperty("align-self", "center");
+    }
+    return node;
+  }
+
+  /* One quiet toggle away: the two flags, plus — on an open row — where that
+     row came from. Nothing in here is needed to write an entry, which is
+     exactly why it is in here (sadeleştirme, "Neyi gizliyoruz"). */
+  function moreFieldSpecs(seed, opts) {
+    return [
+      caption("form.direction"),
+      {
+        name: "direction",
+        type: "select",
+        labelKey: "form.direction",
+        value: seed.direction === "in" ? "in" : "out",
+        options: [
+          { value: "out", labelKey: "form.direction.out" },
+          { value: "in", labelKey: "form.direction.in" }
+        ],
+        onChange: function () { opts.touch.direction = true; }
+      },
+      caption("form.fixed"),
+      {
+        name: "fixed",
+        type: "switch",
+        labelKey: "form.fixed",
+        value: !!seed.fixed,
+        onChange: function () { opts.touch.fixed = true; }
+      }
+    ];
+  }
+
+  function writeSelect(api, name, value) {
+    var entry = api && api.fields ? api.fields[name] : null;
+    if (!entry || !entry.control) return;
+    entry.control.value = String(value);
+  }
+
+  function writeSwitch(api, name, value) {
+    var entry = api && api.fields ? api.fields[name] : null;
+    if (!entry || !entry.control) return;
+    entry.control.checked = !!value;
+  }
+
+  /* Everything a draft needs, and every reason it cannot be written. The money
+     field's own parse failure never arrives here — quickRow catches that one
+     before onSubmit — so a reading that is present but negative or zero is a
+     real mistake with a sentence of its own (E1). */
+  function buildDraft(values, touch, base) {
+    var errors = {};
+
+    var dir = touch.direction
+      ? (values.direction === "in" ? "in" : "out")
+      : directionForCategory(values.categoryId);
+
+    var minor = values.amount;
+    if (minor === null || minor === undefined) errors.amount = "err.required";
+    else if (minor < 0) errors.amount = "err.negativeAmount";
+    else if (minor === 0) errors.amount = "err.zeroAmount";
+
+    if (!values.date) errors.date = "err.required";
+
+    var draft = {
+      date: values.date,
+      /* The schema keeps the amount positive and puts the direction in its own
+         field, so what is stored is the magnitude (E1). */
+      amount: typeof minor === "number" ? Math.abs(minor) : 0,
+      direction: dir,
+      categoryId: values.categoryId,
+      note: values.note,
+      source: base ? base.source : "manual",
+      confirmed: base ? base.confirmed !== false : true
+    };
+
+    /* The fixed mark is only STATED when the reader set it by hand. Left out,
+       Moon.Model owns it: a new record inherits the category's answer, and an
+       updated one can tell an inherited mark (which follows the record to its
+       new category) from one set on the record itself (which is kept). Sending
+       the switch's value every time would overrule that and leave a row moved
+       into Rent counting as variable spending. */
+    if (touch.fixed) draft.fixed = !!values.fixed;
+
+    var Model = Moon.Model;
+    if (Model && typeof Model.validateEntry === "function") {
+      var check = Model.validateEntry(draft) || { errors: {} };
+      Object.keys(check.errors || {}).forEach(function (name) {
+        /* Our own reading of the amount is more precise than "must be
+           positive", so it is never overwritten. */
+        if (!errors[name]) errors[name] = check.errors[name];
+      });
+    }
+
+    return { draft: draft, errors: errors };
+  }
+
+  function seedFromDraft(draft, fallback) {
+    if (!draft) return fallback;
+    var seed = {
+      date: draft.date,
+      amount: draft.amount,
+      categoryId: draft.categoryId,
+      note: draft.note,
+      direction: draft.direction,
+      fixed: draft.fixed
+    };
+    if (!seed.date) seed.date = fallback.date;
+    if (!knownCategory(seed.categoryId)) seed.categoryId = fallback.categoryId;
+    return seed;
+  }
+
+  /* --------------------------------------------------------- head quickRow */
+
+  function quickSeed() {
+    var fallback = {
+      date: lastUsed.date || today() || "",
+      amount: "",
+      categoryId: knownCategory(lastUsed.categoryId) ? lastUsed.categoryId : firstCategoryId(),
+      note: "",
+      direction: null,
+      fixed: null
+    };
+    var seed = seedFromDraft(quickDraft, fallback);
+    /* Whatever the sheet is not told by hand, the category says. */
+    if (!quickTouch.direction) seed.direction = directionForCategory(seed.categoryId);
+    if (!quickTouch.fixed) seed.fixed = fixedForCategory(seed.categoryId);
+    return seed;
+  }
+
+  function buildQuickRow() {
+    var UI = Moon.UI;
+    if (!UI || typeof UI.quickRow !== "function") return null;
+
+    var seed = quickSeed();
+    var opts = {
+      touch: quickTouch,
+      onCategory: function (value) {
+        if (!quickTouch.direction) writeSelect(quickApi, "direction", directionForCategory(value));
+        if (!quickTouch.fixed) writeSwitch(quickApi, "fixed", fixedForCategory(value));
+      }
+    };
+
+    quickApi = UI.quickRow({
+      "class": "quickrow--ledger",
+      memoryKey: QUICK_MEMORY,
+      fields: entryFieldSpecs(seed, opts),
+      moreFields: moreFieldSpecs(seed, opts),
+      moreLabelKey: "common.more",
+      submitLabelKey: "ledger.form.submit",
+      /* What makes a run of entries cheap: the day and the category stay, the
+         amount and the note empty, and the caret lands back on the amount. */
+      keepOnSubmit: ["date", "categoryId"],
+      onSubmit: function (values) {
+        var Model = Moon.Model;
+        if (!Model || typeof Model.addEntry !== "function") return { ok: false, errors: {} };
+
+        var read = buildDraft(values, quickTouch, null);
+        if (Object.keys(read.errors).length) return { ok: false, errors: read.errors };
+
+        var id = Model.addEntry(read.draft);
+        if (!id) return { ok: false, errors: { amount: "err.unknown" } };
+
+        lastUsed.date = read.draft.date;
+        lastUsed.categoryId = read.draft.categoryId;
+        /* A saved row ends the override: the next entry's direction and mark
+           come from whichever category it lands in. */
+        quickTouch.direction = false;
+        quickTouch.fixed = false;
+        flash = { messageKey: "ledger.saved" };
+        return { ok: true };
+      }
+    });
+
+    if (quickDraft && quickDraft["@more"] && typeof quickApi.setMoreOpen === "function") {
+      quickApi.setMoreOpen(true);
+    }
+    return quickApi;
+  }
+
+  /* ------------------------------------------------------- the edited row */
+
+  /* Where the row came from, when it was written, and what its margin mark
+     means. Read-only, inside the open row's own sheet: sadeleştirme puts the
+     provenance of a row exactly one toggle away from the row. */
+  function detailNode(entry, overSet) {
+    var list = dom.el("dl", { "class": "sm dim" });
+    var rows = 0;
+
+    function add(labelKey, text) {
+      if (!text || !has(labelKey)) return;
+      list.appendChild(dom.el("dt", null, t(labelKey)));
+      list.appendChild(dom.el("dd", null, text));
+      rows += 1;
+    }
+
+    var sourceKey = SOURCE_KEYS[entry.source] || SOURCE_KEYS.manual;
+    add("ledger.filter.source", has(sourceKey) ? t(sourceKey) : "");
+
+    /* entry.createdAt is an INSTANT (…T21:14:03.000Z), not a civil date, so
+       reading it with Date is the correct thing and not the §0.6 trap: the
+       trap is "2026-03-01", a civil day that Date reads as UTC midnight. */
+    add("ledger.detail.created", stamp(entry.createdAt));
+
+    var kind = markKindFor(entry, overSet);
+    var markKey = kind ? MARK_KEYS[kind] : null;
+    add("ledger.detail.mark", markKey && has(markKey) ? t(markKey) : "");
+
+    var wrap = dom.el("div", { "class": "ledger-detail" });
+    if (rows) wrap.appendChild(list);
+
+    /* The one mark whose meaning the catalogue already carries as a finished
+       sentence, so it is said in full rather than filed under a label. */
+    if (kind === "unconfirmed" && has("ledger.unconfirmed.note")) {
+      wrap.appendChild(dom.el("p", { "class": "sm dim", text: t("ledger.unconfirmed.note") }));
+    }
+    if (has("ledger.form.fixedHint")) {
+      wrap.appendChild(dom.el("p", { "class": "sm dim", text: t("ledger.form.fixedHint") }));
+    }
+
+    if (!wrap.childNodes.length) return null;
+    /* .quickrow__extra is a wrapping flex row and this block is prose, not a
+       field: it takes the whole next line instead of squeezing in beside the
+       two switches. Set here because css/moon.css belongs to another agent and
+       this is a layout fact about a node only this file creates. */
+    if (wrap.style && typeof wrap.style.setProperty === "function") {
+      wrap.style.setProperty("flex", "1 1 100%");
+    }
+    return wrap;
+  }
+
+  function two(n) {
+    return n < 10 ? "0" + n : String(n);
+  }
+
+  function stamp(iso) {
+    if (!iso) return "";
+    var when = new global.Date(iso);
+    if (!when || isNaN(when.getTime())) return "";
+    try {
+      return new global.Intl.DateTimeFormat(lang(), {
+        dateStyle: "medium",
+        timeStyle: "short"
+      }).format(when);
+    } catch (error) {
+      /* No Intl, or a locale it refuses: the civil day alone still answers
+         "when was this written" well enough to be worth printing. The civil
+         string is built from the LOCAL parts, never from toISOString. */
+      var Dates = Moon.Dates;
+      if (!Dates || typeof Dates.formatDate !== "function") return "";
+      var civil = when.getFullYear() + "-" + two(when.getMonth() + 1) + "-" + two(when.getDate());
+      return Dates.formatDate(civil, lang(), "long");
+    }
+  }
+
+  /* The arrows inside an open row move between that row's own fields and never
+     reach the list — the roving list only ever answers keys aimed at the row
+     element itself, and this handler makes the inside of the row navigable in
+     the same axis. A <select> is left alone on purpose: there ArrowUp and
+     ArrowDown are how you pick an option, and taking that away to gain a
+     second way of moving between four fields would be a bad trade. */
+  function editStops() {
+    if (!editApi) return [];
+    return dom.qsa("input, select, textarea, button", editApi.element).filter(onScreen);
+  }
+
+  function onEditKey(event) {
+    if (event.ctrlKey || event.metaKey || event.altKey) return;
+    if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
+    var target = event.target;
+    if (!target) return;
+    if (String(target.tagName || "").toUpperCase() === "SELECT") return;
+
+    var stops = editStops();
+    var at = stops.indexOf(target);
+    if (at === -1) return;
+
+    event.preventDefault();
+    if (typeof event.stopPropagation === "function") event.stopPropagation();
+
+    var next = at + (event.key === "ArrowDown" ? 1 : -1);
+    if (next < 0) next = stops.length - 1;
+    if (next > stops.length - 1) next = 0;
+    focusControl(stops[next], null);
+  }
+
+  /* The row, in place, as the same quickRow. The wrapper keeps [data-row] so
+     the roving list's row count does not shift under the reader while one row
+     is open, and so Escape has somewhere to put the focus back. */
+  function editRowNode(entry, overSet) {
+    var UI = Moon.UI;
+    if (!UI || typeof UI.quickRow !== "function") return null;
+
+    var fallback = {
+      date: entry.date,
+      amount: entry.amount,
+      categoryId: entry.categoryId,
+      note: entry.note || "",
+      direction: directionOf(entry),
+      fixed: !!entry.fixed
+    };
+    /* Nothing is derived here: an open row starts from what is STORED, and the
+       category only moves the direction forward from there, through onCategory
+       below. Deriving on every redraw would quietly rewrite a row whose fixed
+       mark was set by hand against its category — the one case where guessing
+       loses data instead of saving a keystroke. */
+    var seed = seedFromDraft(editDraft, fallback);
+
+    var opts = {
+      touch: editTouch,
+      onCategory: function (value) {
+        if (!editTouch.direction) writeSelect(editApi, "direction", directionForCategory(value));
+        /* The fixed mark is NOT moved here. On an open row the switch shows
+           what is stored, and an untouched mark is left to Moon.Model, which
+           can tell an inherited one from one set by hand; guessing in the
+           switch would only make the row say something the save will not do. */
+      }
+    };
+
+    var extra = moreFieldSpecs(seed, opts);
+    var detail = detailNode(entry, overSet);
+    if (detail) extra.push(detail);
+
+    editApi = UI.quickRow({
+      "class": "quickrow--edit",
+      memoryKey: EDIT_MEMORY,
+      fields: entryFieldSpecs(seed, opts),
+      moreFields: extra,
+      moreLabelKey: "common.details",
+      submitLabelKey: "ledger.form.submit.edit",
+      onSubmit: function (values) {
+        var Model = Moon.Model;
+        if (!Model || typeof Model.updateEntry !== "function") return { ok: false, errors: {} };
+
+        var read = buildDraft(values, editTouch, entry);
+        if (Object.keys(read.errors).length) return { ok: false, errors: read.errors };
+
+        var ok = Model.updateEntry(entry.id, read.draft);
+        if (!ok) return { ok: false, errors: { amount: "err.unknown" } };
+
+        lastUsed.date = read.draft.date;
+        lastUsed.categoryId = read.draft.categoryId;
+        flash = { messageKey: "ledger.saved" };
+        /* Closed here and now, inside onSubmit: quickRow will clear its fields
+           after this returns, and clearing a row the reader is still looking at
+           would blink. By the time that runs the form is off the page and the
+           focus is already back on the saved row. */
+        closeEdit(entry.id);
+        return { ok: true };
+      },
+      onCancel: function () {
+        closeEdit(entry.id);
+      }
+    });
+
+    if (editDraft && editDraft["@more"] && typeof editApi.setMoreOpen === "function") {
+      editApi.setMoreOpen(true);
+    }
+
+    editApi.element.addEventListener("keydown", onEditKey, false);
+
+    /* Esc gives up, and quickRow already wires it — but a thumb has no Esc
+       key, so the one way out of an open row cannot be a keystroke only. */
+    var give = dom.el("button", {
+      "class": "btn is-quiet quickrow__cancel",
+      type: "button",
+      text: t("common.cancel")
+    });
+    give.addEventListener("click", function () { closeEdit(entry.id); });
+    var strip = dom.qs(".quickrow__fields", editApi.element);
+    if (strip) strip.appendChild(give);
+
+    var wrap = dom.el("div", {
+      "class": "ledger-edit",
+      tabindex: "-1",
+      dataset: { row: "1", id: entry.id }
+    }, editApi.element);
+    return wrap;
+  }
+
+  function openEdit(id) {
+    if (!id || editingId === id) return;
+    editingId = id;
+    editDraft = null;
+    editApi = null;
+    editTouch.direction = false;
+    editTouch.fixed = false;
+    refreshList();
+    if (editApi && typeof editApi.focusFirst === "function") {
+      /* The amount is what a reader almost always came to change, but the row
+         reads left to right and the date is the first field; focusFirst keeps
+         the two in agreement. */
+      editApi.focusFirst();
+    }
+  }
+
+  function closeEdit(focusId) {
+    if (!editingId) return;
+    editingId = null;
+    editDraft = null;
+    editApi = null;
+    editTouch.direction = false;
+    editTouch.fixed = false;
+    restore = focusId ? { scope: "row", id: focusId, part: "row", index: rowIndex } : restore;
+    refreshList(true);
   }
 
   /* Day groups. Each one is its own element: that is what makes the
@@ -393,6 +1125,16 @@
         var guide = (flat || heavy) &&
           ordinal % GUIDE_STEP === 0 &&
           (flat || ordinal < list.length);
+
+        if (entry.id === editingId) {
+          var open = editRowNode(entry, overSet);
+          if (open) {
+            group.appendChild(open);
+            return;
+          }
+          /* No quickRow to be had: the row still has to be readable. */
+          editingId = null;
+        }
         group.appendChild(rowNode(entry, { guide: guide, overSet: overSet }));
       });
 
@@ -410,7 +1152,9 @@
      handler owns the rest of the contract:
 
        Space        toggle this row's selection
-       ArrowRight   step into the action strip (edit / copy / delete)
+       Enter        open this row for editing, in place
+       Delete       delete it and leave the undo strip
+       ArrowRight   step into the action strip (copy / delete)
        ArrowLeft    back out of the strip, or move inside it
        Home / End   first / last action
        Escape       back to the row
@@ -420,14 +1164,14 @@
      hidden button is not a keyboard target — there the arrow simply does
      nothing and Enter/Delete still carry the two real actions. */
 
-  function visible(node) {
+  function onScreen(node) {
     if (!node) return false;
     if (node.offsetParent === null) return false;
     return true;
   }
 
   function rowActions(row) {
-    return dom.qsa(".ledger-row__action", row).filter(visible);
+    return dom.qsa(".ledger-row__action", row).filter(onScreen);
   }
 
   function allRows() {
@@ -438,20 +1182,12 @@
     if (row && typeof row.focus === "function") row.focus();
   }
 
-  /* refreshList() throws the rows away and builds new ones, so whoever was
-     standing on a row has to be put back on it. */
-  function redrawKeepingFocus() {
-    var index = roving && typeof roving.index === "function" ? roving.index() : rowIndex;
-    refreshList();
-    if (roving && typeof roving.focus === "function") roving.focus(index);
-  }
-
   function toggleSelection(row) {
     var id = row && row.dataset ? row.dataset.id : null;
     if (!id) return;
     if (selected[id]) delete selected[id];
     else selected[id] = true;
-    redrawKeepingFocus();
+    refreshList();
   }
 
   function leaveStrip(row, delta) {
@@ -512,7 +1248,8 @@
       return;
     }
 
-    /* A control the pointer put the focus into owns its own keys. */
+    /* A control the pointer put the focus into owns its own keys — including
+       every field of the row that is currently open for editing. */
     if (target !== row) return;
 
     /* " " on a modern browser, "Spacebar" on the ones that never updated. */
@@ -528,6 +1265,19 @@
       event.preventDefault();
       items[0].focus();
     }
+  }
+
+  function onLedgerClick(event) {
+    var target = event.target;
+    if (!target || typeof target.closest !== "function") return;
+    /* The action strip and the selection box speak for themselves. */
+    if (target.closest(".ledger-row__action")) return;
+    if (target.closest(".ledger-row__pick")) return;
+    /* .ledger-row, not [data-row]: the open editor's wrapper carries the same
+       data attribute and a click inside it must not reopen it. */
+    var row = target.closest(".ledger-row");
+    if (!row || !row.dataset || !row.dataset.id) return;
+    openEdit(row.dataset.id);
   }
 
   /* One line of text, once, above the list — the keys are worth nothing if
@@ -548,14 +1298,13 @@
     if (!UI || typeof UI.notice !== "function") return;
 
     if (flash) {
-      noticeHost.appendChild(alias(UI.notice({
+      noticeHost.appendChild(UI.notice({
         kind: "info",
-        "class": "is-info",
         messageKey: flash.messageKey,
         params: flash.params,
         dismissible: true,
         dismissKey: "common.close"
-      }), "notice__text", "notice__body"));
+      }));
       flash = null;
     }
 
@@ -567,19 +1316,17 @@
     if (!waiting.length) return;
 
     var ids = waiting.map(function (entry) { return entry.id; });
-    noticeHost.appendChild(alias(UI.notice({
+    noticeHost.appendChild(UI.notice({
       kind: "warn",
-      "class": "is-warn",
       messageKey: "ledger.unconfirmedCount",
       params: { count: waiting.length },
       body: t("ledger.unconfirmed.note"),
       actions: [{
         labelKey: "ledger.confirmAll",
         kind: "primary",
-        "class": "is-primary",
         onClick: function () { confirmAll(ids); }
       }]
-    }), "notice__text", "notice__body"));
+    }));
   }
 
   function bulkBar() {
@@ -588,7 +1335,11 @@
     var UI = Moon.UI;
     if (!UI || typeof UI.notice !== "function") return null;
 
-    return alias(UI.notice({
+    /* The class names ui.js already prints (.notice__text, .btn.is-row,
+       .empty__heading) are the ones moon.css styles, so nothing here renames
+       them: a view that rewrote another agent's class names would only be
+       guessing at a stylesheet it does not own. */
+    return UI.notice({
       kind: "info",
       "class": "is-info",
       messageKey: "ledger.count",
@@ -598,7 +1349,7 @@
           labelKey: "common.delete",
           kind: "danger",
           "class": "is-danger",
-          onClick: function () { askDeleteMany(ids); }
+          onClick: function () { deleteMany(ids); }
         },
         {
           labelKey: "common.cancel",
@@ -610,7 +1361,7 @@
           }
         }
       ]
-    }), "notice__text", "notice__body");
+    });
   }
 
   /* ---------------------------------------------------------------- filters */
@@ -620,17 +1371,9 @@
     var bar = dom.el("div", { "class": "filters" });
     if (!UI || typeof UI.field !== "function") return bar;
 
-    bar.appendChild(dom.el("div", { "class": "form__actions" }, [
-      (function () {
-        var node = dom.el("button", {
-          "class": "btn is-primary",
-          type: "button",
-          text: t("ledger.form.submit")
-        });
-        node.addEventListener("click", function () { openForm(null); });
-        return node;
-      })()
-    ]));
+    /* No "write an entry" button any more: the entry row is always open, one
+       line below this bar, and a button that scrolls to a visible form is a
+       button that does nothing. */
 
     debouncedSearch = util.debounce(function () {
       refreshList();
@@ -729,28 +1472,35 @@
   function emptyFiltered() {
     var UI = Moon.UI;
     if (!UI || typeof UI.emptyState !== "function") return dom.el("div");
-    return alias(UI.emptyState({
+    return UI.emptyState({
       headingKey: "empty.ledger.filtered.heading",
       bodyKey: "empty.ledger.filtered.body",
       actions: filtersActive()
         ? [{ labelKey: "ledger.filter.clear", onClick: clearFilters }]
         : null
-    }), "empty__heading", "empty__title");
+    });
   }
 
   /* The first page of the notebook (G9): the rules are printed, the lines are
-     simply empty, and the three ways in are real rows, not a button row. */
+     simply empty, and the three ways in are real rows, not a button row. The
+     first of the three is now "the line above this one is already waiting",
+     so it moves the caret there instead of opening anything. */
   function emptyLedger() {
     var UI = Moon.UI;
     if (!UI || typeof UI.emptyState !== "function") return dom.el("div");
-    var node = UI.emptyState({
+    return UI.emptyState({
       ghost: true,
       columns: 3,
       headingKey: "empty.ledger.heading",
       bodyKey: "empty.ledger.body",
       footKey: "empty.ledger.footer",
       actions: [
-        { labelKey: "empty.ledger.action1", onClick: function () { openForm(null); } },
+        {
+          labelKey: "empty.ledger.action1",
+          onClick: function () {
+            if (quickApi && typeof quickApi.focusFirst === "function") quickApi.focusFirst();
+          }
+        },
         { labelKey: "empty.ledger.action2", href: "#veri" },
         {
           labelKey: "empty.ledger.action3",
@@ -761,26 +1511,30 @@
         }
       ]
     });
-    alias(node, "empty__heading", "empty__title");
-    alias(node, "empty__action", "btn is-row");
-    return node;
   }
 
-  /* Rebuilds the list without touching the filter bar, so the caret stays in
-     the search box while the reader types. */
-  function refreshList() {
+  /* Rebuilds the list without touching the filter bar or the entry row, so the
+     caret stays where the reader put it while the rows underneath change. */
+  function refreshList(snapshotted) {
     if (!listHost) return;
+    if (!snapshotted) snapshot();
 
     var period = currentPeriod();
     var rows = filteredEntries(period);
     var total = allEntries(period).length;
 
     /* A selection only means anything for rows the reader can see. */
-    var visible = Object.create(null);
-    rows.forEach(function (entry) { visible[entry.id] = true; });
+    var onView = Object.create(null);
+    rows.forEach(function (entry) { onView[entry.id] = true; });
     Object.keys(selected).forEach(function (id) {
-      if (!visible[id]) delete selected[id];
+      if (!onView[id]) delete selected[id];
     });
+    /* A row the filter just hid cannot stay open for editing. */
+    if (editingId && !onView[editingId]) {
+      editingId = null;
+      editApi = null;
+      editDraft = null;
+    }
 
     var flat = filtersActive() && rows.length < FLAT_MAX;
     var sum = netOf(rows);
@@ -797,6 +1551,7 @@
         : t("ledger.count", { count: rows.length });
     }
 
+    editApi = null;
     dom.clear(listHost);
     drawNotices(period);
 
@@ -805,6 +1560,9 @@
 
     if (!rows.length) {
       listHost.appendChild(ledgerIsEmpty() ? emptyLedger() : emptyFiltered());
+      if (roving && typeof roving.destroy === "function") roving.destroy();
+      roving = null;
+      applyRestore();
       return;
     }
 
@@ -817,8 +1575,9 @@
 
     var ledger = dom.el("div", { "class": classes.join(" ") });
     ledger.appendChild(dayGroups(rows, flat, overCategories(period)));
-    /* The node is thrown away on every redraw, so the listener goes with it. */
+    /* The node is thrown away on every redraw, so the listeners go with it. */
     ledger.addEventListener("keydown", onLedgerKey, false);
+    ledger.addEventListener("click", onLedgerClick, false);
     listHost.appendChild(ledger);
 
     listHost.appendChild(dom.el("p", {
@@ -834,43 +1593,29 @@
           start: rowIndex,
           onFocus: function (index) { rowIndex = index; },
           onActivate: function (index, row) {
-            var entry = entryById(rows, row);
-            if (entry) openForm(entry);
+            if (row && row.dataset) openEdit(row.dataset.id);
           },
           onDelete: function (index, row) {
-            var entry = entryById(rows, row);
-            if (entry) askDelete(entry);
+            var entry = row && row.dataset ? entryById(row.dataset.id) : null;
+            if (entry) deleteEntry(entry);
           }
         })
       : null;
-  }
 
-  function entryById(rows, row) {
-    var id = row && row.dataset ? row.dataset.id : null;
-    if (!id) return null;
-    for (var i = 0; i < rows.length; i += 1) {
-      if (rows[i].id === id) return rows[i];
-    }
-    return null;
+    applyRestore();
   }
 
   /* ------------------------------------------------------------ mutations */
 
-  function undo(message, restore) {
+  function undo(message, restoreFn) {
     var UI = Moon.UI;
     if (!UI || typeof UI.undoStrip !== "function") return;
     UI.undoStrip({
       message: message,
       seconds: UNDO_SECONDS,
       dismissKey: "common.close",
-      onUndo: restore
+      onUndo: restoreFn
     });
-    /* ui.js counts down with t("common.secondsLeft"), a key no catalogue
-       carries, so the raw key would sit in the strip for eight seconds. The
-       countdown is aria-hidden decoration; the sentence above already says how
-       long the offer stands. */
-    var count = dom.qs("#strip .undo__count");
-    if (count && count.parentNode) count.parentNode.removeChild(count);
   }
 
   function restoreEntries(records) {
@@ -883,54 +1628,47 @@
     draw();
   }
 
-  function askDelete(entry) {
-    var UI = Moon.UI;
-    if (!UI || typeof UI.confirm !== "function") return;
-    UI.confirm({
-      titleKey: "ledger.delete.title",
-      bodyKey: "ledger.delete.body",
-      confirmKey: "ledger.delete.confirm",
-      danger: true
-    }).then(function (yes) {
-      if (!yes) return;
-      var Model = Moon.Model;
-      if (!Model || typeof Model.removeEntry !== "function") return;
-      /* removeEntry hands the record back — that is the undo payload. */
-      var removed = Model.removeEntry(entry.id);
-      if (!removed) return;
-      delete selected[entry.id];
-      undo(
-        sentences(t("ledger.deleted"), t("ledger.undo.hint", { seconds: UNDO_SECONDS })),
-        function () { restoreEntries([removed]); }
-      );
-      draw();
-    });
+  /* No question asked. Deleting already leaves an eight-second undo strip
+     (G12), and asking first and then offering undo is asking the same question
+     twice — sadeleştirme §3 drops the first one. */
+  function deleteEntry(entry) {
+    var Model = Moon.Model;
+    if (!Model || typeof Model.removeEntry !== "function") return;
+    /* removeEntry hands the record back — that is the undo payload. */
+    var removed = Model.removeEntry(entry.id);
+    if (!removed) return;
+    delete selected[entry.id];
+    if (editingId === entry.id) {
+      editingId = null;
+      editApi = null;
+      editDraft = null;
+    }
+    undo(
+      sentences(t("ledger.deleted"), t("ledger.undo.hint", { seconds: UNDO_SECONDS })),
+      function () { restoreEntries([removed]); }
+    );
+    draw();
   }
 
-  function askDeleteMany(ids) {
-    var UI = Moon.UI;
-    if (!UI || typeof UI.confirm !== "function") return;
-    UI.confirm({
-      titleKey: "ledger.delete.title",
-      bodyKey: "ledger.delete.body",
-      confirmKey: "ledger.delete.confirm",
-      danger: true
-    }).then(function (yes) {
-      if (!yes) return;
-      var Model = Moon.Model;
-      if (!Model || typeof Model.removeEntries !== "function") return;
-      var removed = Model.removeEntries(ids) || [];
-      if (!removed.length) return;
-      selected = Object.create(null);
-      undo(
-        sentences(
-          t("ledger.deletedMany", { count: removed.length }),
-          t("ledger.undo.hint", { seconds: UNDO_SECONDS })
-        ),
-        function () { restoreEntries(removed); }
-      );
-      draw();
-    });
+  function deleteMany(ids) {
+    var Model = Moon.Model;
+    if (!Model || typeof Model.removeEntries !== "function") return;
+    var removed = Model.removeEntries(ids) || [];
+    if (!removed.length) return;
+    selected = Object.create(null);
+    if (editingId && ids.indexOf(editingId) !== -1) {
+      editingId = null;
+      editApi = null;
+      editDraft = null;
+    }
+    undo(
+      sentences(
+        t("ledger.deletedMany", { count: removed.length }),
+        t("ledger.undo.hint", { seconds: UNDO_SECONDS })
+      ),
+      function () { restoreEntries(removed); }
+    );
+    draw();
   }
 
   function confirmAll(ids) {
@@ -960,209 +1698,29 @@
     draw();
   }
 
-  /* ----------------------------------------------------------------- form */
-
-  function fillSelect(select, options, value) {
-    if (!select) return;
-    dom.clear(select);
-    options.forEach(function (option) {
-      var attrs = { value: option.value };
-      if (String(value || "") === String(option.value)) attrs.selected = true;
-      select.appendChild(dom.el("option", attrs, option.label));
-    });
-  }
-
-  function openForm(entry) {
-    var UI = Moon.UI;
-    if (!UI || typeof UI.form !== "function" || typeof UI.dialog !== "function") return;
-
-    var editing = !!entry;
-    var direction = editing ? directionOf(entry) : (lastUsed.direction || "out");
-    var kindOf = function (dir) { return dir === "in" ? "income" : "expense"; };
-    var options = categoryOptions(kindOf(direction));
-
-    var chosen = editing ? entry.categoryId : lastUsed.categoryId;
-    var known = options.some(function (option) { return option.value === chosen; });
-    if (!known) chosen = options.length ? options[0].value : "";
-
-    /* One summary line above the form, per moon.css .form__summary: what
-       happened, how many fields, and the fields say the rest themselves. */
-    var summary = dom.el("p", { "class": "form__summary", hidden: true });
-    var box = null;
-
-    var api = UI.form({
-      fields: [
-        {
-          name: "date",
-          type: "date",
-          labelKey: "form.date",
-          required: true,
-          value: editing ? entry.date : (lastUsed.date || today() || "")
-        },
-        {
-          name: "amount",
-          type: "money",
-          labelKey: "form.amount",
-          hintKey: "form.amount.hint",
-          required: true,
-          currency: currency(),
-          value: editing ? entry.amount : null,
-          autofocus: !editing
-        },
-        {
-          name: "direction",
-          type: "select",
-          labelKey: "form.direction",
-          required: true,
-          value: direction,
-          options: [
-            { value: "out", labelKey: "form.direction.out" },
-            { value: "in", labelKey: "form.direction.in" }
-          ],
-          onChange: function (value) {
-            /* An income category can never take an expense, so the list is
-               rebuilt instead of letting the reader pick an invalid pair. */
-            var dir = value === "in" ? "in" : "out";
-            var next = categoryOptions(kindOf(dir));
-            var field = api.fields.categoryId;
-            fillSelect(field ? field.control : null, next,
-              next.length ? next[0].value : "");
-          }
-        },
-        {
-          name: "categoryId",
-          type: "select",
-          labelKey: "form.category",
-          required: true,
-          value: chosen,
-          options: options
-        },
-        {
-          name: "note",
-          type: "text",
-          labelKey: "form.note",
-          hintKey: "form.note.hint",
-          params: { max: NOTE_MAX },
-          maxLength: NOTE_MAX,
-          value: editing ? entry.note : ""
-        }
-      ],
-      actions: [
-        {
-          labelKey: editing ? "ledger.form.submit.edit" : "ledger.form.submit",
-          kind: "primary",
-          "class": "is-primary",
-          type: "submit"
-        },
-        {
-          labelKey: "common.cancel",
-          kind: "quiet",
-          "class": "is-quiet",
-          onClick: function () { if (box) box.close(); }
-        }
-      ],
-      onSubmit: function (values) {
-        save(values, entry, api, summary, box);
-      }
-    });
-
-    box = UI.dialog({
-      titleKey: editing ? "ledger.form.title.edit" : "ledger.form.title.new",
-      body: [summary, api.element]
-    });
-    box.open();
-  }
-
-  function showErrors(api, summary, errors) {
-    var names = Object.keys(errors);
-    api.setErrors(errors);
-    summary.hidden = false;
-    summary.textContent = sentences(
-      t("form.errors.title"),
-      t("form.errors.body", { count: names.length })
-    );
-    api.focusFirstError();
-  }
-
-  function save(values, entry, api, summary, box) {
-    var Money = Moon.Money;
-    var Model = Moon.Model;
-    if (!Model || typeof Model.validateEntry !== "function") return;
-
-    var errors = api.fieldErrors() || {};
-
-    /* Moon.Money.parse returns a SIGNED reading; the schema keeps the amount
-       positive and puts the direction in its own field. So a typed minus is a
-       real mistake with its own sentence (E1), and the stored value is r.abs. */
-    var field = api.fields.amount;
-    var raw = field ? String(field.control.value || "").trim() : "";
-    var parsed = raw && Money && typeof Money.parse === "function"
-      ? Money.parse(raw, { decimal: "auto" })
-      : { ok: false };
-
-    if (!raw) errors.amount = "err.required";
-    else if (!parsed.ok) errors.amount = parsed.error || "money.invalid";
-    else if (parsed.negative) errors.amount = "err.negativeAmount";
-    else if (!parsed.abs) errors.amount = "err.zeroAmount";
-
-    var draft = {
-      date: values.date,
-      amount: parsed.ok ? parsed.abs : 0,
-      direction: values.direction === "in" ? "in" : "out",
-      categoryId: values.categoryId,
-      note: values.note,
-      source: entry ? entry.source : "manual",
-      confirmed: entry ? entry.confirmed !== false : true
-    };
-    if (entry) draft.fixed = entry.fixed;
-
-    var check = Model.validateEntry(draft);
-    Object.keys(check.errors).forEach(function (name) {
-      /* Our own amount reading is more precise than "must be positive". */
-      if (!errors[name]) errors[name] = check.errors[name];
-    });
-
-    if (Object.keys(errors).length) {
-      showErrors(api, summary, errors);
-      return;
-    }
-
-    var ok = entry
-      ? Model.updateEntry(entry.id, draft)
-      : Model.addEntry(draft);
-
-    if (!ok) {
-      /* The fields are all clean, so the fault belongs to the write, not to a
-         value the reader can correct in place. */
-      api.setErrors(null);
-      summary.hidden = false;
-      summary.textContent = t("err.unknown");
-      return;
-    }
-
-    /* Entries arrive in runs, so the next dialog opens on the same day and the
-       same category. */
-    lastUsed.date = draft.date;
-    lastUsed.categoryId = draft.categoryId;
-    lastUsed.direction = draft.direction;
-
-    flash = { messageKey: "ledger.saved" };
-    if (box) box.close();
-    draw();
-  }
-
   /* ----------------------------------------------------------- lifecycle */
 
   function draw() {
     if (!host) return;
+    snapshot();
+
+    quickApi = null;
+    editApi = null;
     dom.clear(host);
 
     noticeHost = dom.el("div", { "class": "ledger__notices" });
+    quickHost = dom.el("div", { "class": "ledger__entry" });
     listHost = dom.el("div", { "class": "ledger__list" });
     asideNode = dom.el("span", { "class": "section__aside num" });
 
+    var quick = buildQuickRow();
+    if (quick) quickHost.appendChild(quick.element);
+
     var UI = Moon.UI;
-    var body = [noticeHost, filterBar(), listHost];
+    /* The filter bar is sticky and the entry row is NOT: on a phone the entry
+       row grows to four lines and a sticky one would eat the screen, and two
+       sticky bands would cover each other (sadeleştirme §8). */
+    var body = [noticeHost, filterBar(), quickHost, listHost];
 
     var node = UI && typeof UI.section === "function"
       ? UI.section({
@@ -1174,7 +1732,7 @@
       : dom.el("section", null, body);
 
     host.appendChild(node);
-    refreshList();
+    refreshList(true);
   }
 
   Moon.Views = Moon.Views || {};
@@ -1197,8 +1755,15 @@
       debouncedSearch = null;
       clearButton = null;
       listHost = null;
+      quickHost = null;
       noticeHost = null;
       asideNode = null;
+      quickApi = null;
+      editApi = null;
+      editingId = null;
+      quickDraft = null;
+      editDraft = null;
+      restore = null;
       host = null;
     }
   };

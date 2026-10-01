@@ -506,6 +506,7 @@
   /* ---------------------------------------------------------------- field */
 
   function selectOptions(select, options, value, placeholder) {
+    var matched = false;
     if (placeholder !== null && placeholder !== undefined) {
       select.appendChild(dom.el("option", { value: "" }, placeholder));
     }
@@ -522,9 +523,13 @@
       }
       var attrs = { value: optValue };
       if (option && option.disabled) attrs.disabled = true;
-      if (String(value === null || value === undefined ? "" : value) === optValue) attrs.selected = true;
+      if (String(value === null || value === undefined ? "" : value) === optValue) {
+        attrs.selected = true;
+        matched = true;
+      }
       select.appendChild(dom.el("option", attrs, optLabel));
     });
+    return matched;
   }
 
   function buildControl(spec, ids) {
@@ -544,7 +549,15 @@
     if (type === "select") {
       var select = dom.el("select", attrs);
       var placeholder = spec.placeholderKey ? t(spec.placeholderKey) : (spec.required ? "" : null);
-      selectOptions(select, spec.options, value, placeholder);
+      /* The <option selected> attribute is what a parsed document reads, but a
+         select built node by node and never attached reports "" until the
+         value is set on the element too — and quickRow reads its values before
+         anything is in the page. Only when the value really is one of the
+         options: assigning an unknown value would blank a select that used to
+         fall back to its first entry. */
+      if (selectOptions(select, spec.options, value, placeholder)) {
+        select.value = String(value);
+      }
       return select;
     }
 
@@ -840,18 +853,7 @@
          parse, a date the fallback text box could not read) — useful before
          handing values to a Model validator. */
       fieldErrors: function () {
-        var out = {};
-        entries.forEach(function (entry) {
-          if (entry.type === "money") {
-            var raw = String(entry.control.value || "").trim();
-            if (raw && !parseMoney(raw).ok) out[entry.name] = "money.invalid";
-          }
-          if (entry.type === "date") {
-            var text = String(entry.control.value || "").trim();
-            if (text && entry.read() === null) out[entry.name] = "err.badDate";
-          }
-        });
-        return out;
+        return ownErrors(entries);
       },
 
       setErrors: function (map) {
@@ -885,11 +887,7 @@
         }
         entries.forEach(function (entry) {
           if (!Object.prototype.hasOwnProperty.call(values, entry.name)) return;
-          var next = values[entry.name];
-          if (entry.type === "switch") entry.control.checked = !!next;
-          else if (entry.type === "money") entry.control.value = typeof next === "number" ? moneyForInput(next) : String(next || "");
-          else if (entry.type === "date") entry.control.value = readDateValue(next) || "";
-          else entry.control.value = next === null || next === undefined ? "" : String(next);
+          writeEntry(entry, values[entry.name]);
         });
         return api;
       }
@@ -918,6 +916,819 @@
     element.moonForm = api;
     return api;
   }
+
+  /* --------------------------------------------- field values, read/write */
+
+  /* form(), quickRow() and inlineValue() all have to put a value into a field
+     and take it out again, and the four field types each store it somewhere
+     else. These two are the single place that knows which. */
+  function writeEntry(entry, next) {
+    var control = entry.control;
+    if (!control) return;
+    if (entry.type === "switch") {
+      control.checked = !!next;
+      return;
+    }
+    if (entry.type === "money") {
+      control.value = typeof next === "number" ? moneyForInput(next) : String(next === null || next === undefined ? "" : next);
+    } else if (entry.type === "date") {
+      control.value = readDateValue(next) || "";
+    } else {
+      control.value = next === null || next === undefined ? "" : String(next);
+    }
+    /* The money readout under the field is painted by an `input` listener
+       inside field(), which a programmatic write never fires. Repaint it from
+       the outside rather than synthesising an event (file:// + old Safari). */
+    if (entry.type === "money" && entry.element) {
+      var readout = dom.qs(".field__read", entry.element);
+      if (readout) {
+        var raw = String(control.value || "").trim();
+        var parsed = raw ? parseMoney(raw) : null;
+        if (parsed && parsed.ok) {
+          readout.textContent = formatMoney(parsed.minor, { symbol: true });
+          control.setAttribute("data-minor", String(parsed.minor));
+        } else {
+          readout.textContent = "";
+          control.removeAttribute("data-minor");
+        }
+      }
+    }
+  }
+
+  /* "Cleared" is not "empty" for every control. A <select> has no empty value
+     unless someone put an empty option in it, so writing "" to one leaves the
+     reader looking at a blank box they cannot get back — which is exactly what
+     the quick row would do to the direction field after the first save. The
+     DOM already records what empty means here: the option that carries the
+     `selected` attribute, or failing that the first one. */
+  function blankEntry(entry) {
+    var control = entry.control;
+    if (entry.type === "select" && control && control.options && control.options.length) {
+      var index = 0;
+      for (var i = 0; i < control.options.length; i += 1) {
+        if (control.options[i].defaultSelected) {
+          index = i;
+          break;
+        }
+      }
+      control.selectedIndex = index;
+      entry.touched = false;
+      return;
+    }
+    writeEntry(entry, entry.type === "switch" ? false : "");
+    entry.touched = false;
+  }
+
+  function fieldEntries(nodes) {
+    var out = [];
+    (nodes || []).forEach(function (node) {
+      if (node && node.moonField) out.push(node.moonField);
+    });
+    return out;
+  }
+
+  /* Intrinsic errors a field already knows about before any Model validator
+     sees the values: an amount that does not parse, a date the fallback text
+     box could not read. */
+  function ownErrors(entries) {
+    var out = {};
+    entries.forEach(function (entry) {
+      if (!entry.control) return;
+      if (entry.type === "money") {
+        var raw = String(entry.control.value || "").trim();
+        if (raw && !parseMoney(raw).ok) out[entry.name] = "money.invalid";
+      } else if (entry.type === "date") {
+        var text = String(entry.control.value || "").trim();
+        if (text && entry.read() === null) out[entry.name] = "err.badDate";
+      }
+    });
+    return out;
+  }
+
+  function hasKey(key) {
+    var I18n = Moon.I18n;
+    if (!key) return false;
+    if (I18n && typeof I18n.has === "function") {
+      try {
+        return !!I18n.has(key);
+      } catch (error) {
+        return false;
+      }
+    }
+    return false;
+  }
+
+  /* The first key the catalogue actually carries. A key this file asks for but
+     the catalogue has not grown yet must never reach the screen as its own
+     name, and lang.*.js belongs to another agent — so every new label names
+     the key it wants first and an existing key behind it. */
+  function firstKey(list, fallback) {
+    for (var i = 0; i < list.length; i += 1) {
+      if (list[i] && hasKey(list[i])) return list[i];
+    }
+    return fallback || null;
+  }
+
+  function labelTextOf(fieldNode) {
+    var label = dom.qs(".field__label", fieldNode);
+    return label && label.textContent ? String(label.textContent) : "";
+  }
+
+  /* ------------------------------------------------------------- quickRow */
+
+  /* A row-shaped form that is always open. Enter in any field saves and focus
+     walks back to the first cleared field, so entering sixty records feels
+     like typing sixty lines instead of opening sixty dialogs. UI.dialog stays
+     exactly where it was: it is the price of a decision that destroys data,
+     and writing one more expense is not that (sadeleştirme §1).
+     Session memory of the "more" sheet lives here, keyed by the caller, so a
+     re-render (the router redraws on every state:change) does not fold it. */
+  var quickMore = Object.create(null);
+
+  function quickRow(spec) {
+    spec = spec || {};
+    var id = spec.id || util.id("qr");
+    var moreId = id + "-more";
+    var memoryKey = spec.memoryKey || spec.id || "quickrow";
+
+    var keep = Object.create(null);
+    (spec.keepOnSubmit || []).forEach(function (name) {
+      keep[name] = true;
+    });
+
+    var mainNodes = [];
+    var extraNodes = [];
+
+    function build(list, target) {
+      (list || []).forEach(function (item) {
+        if (!item) return;
+        target.push(isNode(item) ? item : field(item));
+      });
+    }
+    build(spec.fields, mainNodes);
+    build(spec.moreFields, extraNodes);
+
+    var labelled = spec.labels === "visible";
+    if (!labelled) {
+      /* The row is one line, so the <label> is clipped rather than removed —
+         it stays bound to the control through `for`, and the same translated
+         words become the control's title for a pointer that hovers it. */
+      mainNodes.concat(extraNodes).forEach(function (node) {
+        var entry = node.moonField;
+        if (!entry || !entry.control) return;
+        var text = labelTextOf(node);
+        if (text && !entry.control.getAttribute("title")) entry.control.setAttribute("title", text);
+      });
+    }
+
+    var fieldsRow = dom.el("div", { "class": "quickrow__fields" }, mainNodes);
+
+    var submit = button({
+      /* Visible on purpose, even though Enter is the fast path: a finger has
+         no Enter key, and the row must be usable with one thumb. */
+      labelKey: spec.submitLabelKey || "ledger.form.submit",
+      kind: "primary",
+      type: "submit",
+      "class": "quickrow__submit"
+    });
+
+    var moreToggle = null;
+    if (extraNodes.length) {
+      moreToggle = dom.el("button", {
+        "class": "btn is-quiet quickrow__more",
+        type: "button",
+        "aria-expanded": "false",
+        "aria-controls": moreId
+      }, t(firstKey([spec.moreLabelKey, "common.more"], "nav.more")));
+    }
+
+    fieldsRow.appendChild(submit);
+    if (moreToggle) fieldsRow.appendChild(moreToggle);
+
+    var extraRow = dom.el("div", { "class": "quickrow__extra", id: moreId, hidden: true });
+
+    /* One error lane under the row instead of a message inside each 104px
+       column. The per-field <p> keeps its aria-describedby wiring and its
+       aria-invalid, so a screen reader still hears the message on the field it
+       belongs to; nothing is hidden, it is read where there is room for it. */
+    var errorLane = dom.el("div", { "class": "quickrow__errors", hidden: true });
+
+    var element = dom.el("form", {
+      "class": "quickrow" +
+        (labelled ? " quickrow--labeled" : "") +
+        (spec["class"] ? " " + spec["class"] : ""),
+      novalidate: true,
+      id: id
+    }, [fieldsRow, extraRow, errorLane]);
+
+    var open = !!quickMore[memoryKey];
+    var api;
+
+    function allEntries() {
+      return fieldEntries(mainNodes.concat(extraNodes));
+    }
+
+    /* Closed means NOT IN THE DOM, not `hidden`: the ledger spends its tab
+       stops on 60 rows and a folded sheet must not take any of them. The nodes
+       stay alive in extraNodes, so a value typed before folding survives. */
+    function paintMore() {
+      if (!moreToggle) return;
+      moreToggle.setAttribute("aria-expanded", open ? "true" : "false");
+      if (open) {
+        extraNodes.forEach(function (node) {
+          extraRow.appendChild(node);
+        });
+        extraRow.hidden = false;
+      } else {
+        extraNodes.forEach(function (node) {
+          if (node.parentNode) node.parentNode.removeChild(node);
+        });
+        extraRow.hidden = true;
+      }
+    }
+
+    function setOpen(next) {
+      open = !!next;
+      quickMore[memoryKey] = open;
+      paintMore();
+    }
+
+    function values() {
+      var out = {};
+      allEntries().forEach(function (entry) {
+        out[entry.name] = entry.read();
+      });
+      return out;
+    }
+
+    function setErrors(map) {
+      var errors = map || {};
+      var seen = Object.create(null);
+      var messages = [];
+      allEntries().forEach(function (entry) {
+        var key = Object.prototype.hasOwnProperty.call(errors, entry.name) ? errors[entry.name] : null;
+        entry.setError(key);
+        if (key && !seen[key]) {
+          seen[key] = true;
+          messages.push(t(key));
+        }
+      });
+      Array.prototype.slice.call(errorLane.children || []).forEach(function (child) {
+        errorLane.removeChild(child);
+      });
+      messages.forEach(function (text) {
+        errorLane.appendChild(dom.el("p", { "class": "quickrow__error", text: text }));
+      });
+      errorLane.hidden = messages.length === 0;
+      return api;
+    }
+
+    function focusFirstError() {
+      var list = allEntries();
+      for (var i = 0; i < list.length; i += 1) {
+        if (!list[i].errorKey) continue;
+        /* An error on a folded field would otherwise be unreachable. */
+        if (!open && extraNodes.indexOf(list[i].element) !== -1) setOpen(true);
+        return list[i].focus();
+      }
+      return false;
+    }
+
+    function focusFirst() {
+      var list = fieldEntries(mainNodes);
+      for (var i = 0; i < list.length; i += 1) {
+        if (!list[i].control || !list[i].control.disabled) return list[i].focus();
+      }
+      return false;
+    }
+
+    /* keepOnSubmit is what makes a run of entries cheap: the date and the
+       category stay, the amount and the note empty, and focus lands on the
+       first thing that emptied. */
+    function clearForNext() {
+      var firstCleared = null;
+      var mainCleared = null;
+      allEntries().forEach(function (entry) {
+        if (keep[entry.name]) return;
+        blankEntry(entry);
+        if (!firstCleared) firstCleared = entry;
+        if (!mainCleared && mainNodes.indexOf(entry.element) !== -1) mainCleared = entry;
+      });
+      setErrors(null);
+      /* Never unfold the sheet just to park focus: if only folded fields
+         emptied, go back to the top of the visible row. */
+      if (mainCleared) return mainCleared;
+      if (firstCleared && open) return firstCleared;
+      var mains = fieldEntries(mainNodes);
+      return mains.length ? mains[0] : null;
+    }
+
+    function reset(next) {
+      setErrors(null);
+      allEntries().forEach(function (entry) {
+        if (next && Object.prototype.hasOwnProperty.call(next, entry.name)) writeEntry(entry, next[entry.name]);
+        else blankEntry(entry);
+      });
+      return api;
+    }
+
+    api = {
+      element: element,
+      values: values,
+      setErrors: setErrors,
+      focusFirstError: focusFirstError,
+      focusFirst: focusFirst,
+      reset: reset,
+      fields: (function () {
+        var byName = Object.create(null);
+        allEntries().forEach(function (entry) {
+          byName[entry.name] = entry;
+        });
+        return byName;
+      }()),
+      isMoreOpen: function () { return open; },
+      setMoreOpen: function (next) { setOpen(next); return api; },
+      /* The same path Enter takes, for a view that wants to save from its own
+         control (and for the selftest, which has no event loop). */
+      submit: function () { return submitNow(null); },
+      destroy: function () {
+        extraNodes.forEach(function (node) {
+          if (node.parentNode) node.parentNode.removeChild(node);
+        });
+        if (element.parentNode) element.parentNode.removeChild(element);
+        return api;
+      }
+    };
+
+    if (moreToggle) {
+      moreToggle.addEventListener("click", function () {
+        setOpen(!open);
+        if (open) {
+          var list = fieldEntries(extraNodes);
+          if (list.length) list[0].focus();
+        } else {
+          focusNode(moreToggle);
+        }
+      });
+    }
+
+    function submitNow(event) {
+      if (event && typeof event.preventDefault === "function") event.preventDefault();
+
+      var own = ownErrors(allEntries());
+      if (Object.keys(own).length) {
+        setErrors(own);
+        focusFirstError();
+        return false;
+      }
+
+      var result = call(spec.onSubmit, values(), api, event);
+      /* Only an explicit {ok:false} holds the row: a view that returns nothing
+         meant "saved", and losing the typed line over a missing return value
+         would be the worst possible failure here. */
+      if (result && result.ok === false) {
+        setErrors(result.errors || {});
+        focusFirstError();
+        return false;
+      }
+
+      var next = clearForNext();
+      if (next) next.focus();
+      return true;
+    }
+
+    /* A real <form> with a real submit button, so Enter in ANY field is the
+       browser's own behaviour and no key handler has to guess which keys mean
+       "save" in which field. */
+    element.addEventListener("submit", submitNow);
+
+    element.addEventListener("keydown", function (event) {
+      if (event.key !== "Escape") return;
+      if (event.defaultPrevented) return;
+      event.preventDefault();
+      if (typeof spec.onCancel === "function") {
+        call(spec.onCancel, api);
+        return;
+      }
+      reset();
+    });
+
+    paintMore();
+    setErrors(null);
+    element.moonQuickRow = api;
+    return api;
+  }
+
+  /* ---------------------------------------------------------- inlineValue */
+
+  /* A value you edit where it sits. Closed it is a <button>; open it is an
+     <input> with the value selected, so typing replaces it. Enter saves, Esc
+     cancels, blur saves (the reader who clicked away meant to keep it — Esc is
+     how you mean the other thing), and the arrows step it without a mouse.
+     Both halves live in the same single grid cell and are sized from the same
+     --iv-ch, so the column is exactly as wide closed as open: the limits list
+     cannot twitch when a row goes into edit (sadeleştirme §2). */
+  var IV_MIN_CH = 7;
+
+  function inlineValue(spec) {
+    spec = spec || {};
+    var type = spec.type === "number" ? "number" : (spec.type === "text" ? "text" : "money");
+    var numeric = type !== "text";
+    var value = spec.value === undefined ? null : spec.value;
+
+    var step = typeof spec.step === "number" && spec.step > 0
+      ? spec.step
+      : (type === "money" ? 10000 : 1);
+    var min = typeof spec.min === "number" ? spec.min : (numeric ? 0 : null);
+    var max = typeof spec.max === "number" ? spec.max : null;
+
+    /* The accessible name has to say what the control does AND what it
+       currently reads, or a screen reader hears "Period limit, button" on nine
+       rows that differ only by their number. labelParams(value) feeds the
+       key's own placeholders, so the sentence is still built in the catalogue
+       and never by joining strings in here (Turkish suffixes break if it is). */
+    function labelFor(v) {
+      if (spec.labelKey && typeof spec.labelParams === "function") {
+        return t(spec.labelKey, call(spec.labelParams, v) || undefined);
+      }
+      return pick(spec, "label");
+    }
+    var saveErrorKey = firstKey([spec.errorKey, "common.notSaved"], "err.unknown");
+    var errorId = util.id("iv") + "-err";
+
+    var btn = dom.el("button", { "class": "inlinevalue__btn" + (numeric ? " tnum" : ""), type: "button" });
+    var input = dom.el("input", {
+      "class": "inlinevalue__input" + (numeric ? " tnum" : ""),
+      type: "text",
+      autocomplete: "off",
+      hidden: true
+    });
+    if (numeric) input.setAttribute("inputmode", type === "money" ? "decimal" : "numeric");
+    if (spec.maxLength) input.setAttribute("maxlength", String(spec.maxLength));
+
+    /* A <span>, not a <p>: the wrapper is inline and a paragraph may not sit
+       inside one. It is on its own grid row, below both halves. */
+    var errorNode = dom.el("span", { "class": "inlinevalue__error", id: errorId, hidden: true });
+
+    var node = dom.el("span", {
+      "class": "inlinevalue" + (spec["class"] ? " " + spec["class"] : "")
+    }, [btn, input, errorNode]);
+
+    var isOpen = false;
+    var muteBlur = false;
+    var api;
+
+    function shown(v) {
+      if (typeof spec.format === "function") {
+        var out = call(spec.format, v);
+        if (typeof out === "string") return out;
+      }
+      if (v === null || v === undefined || v === "") return "";
+      if (type === "money") return formatMoney(v, { currency: spec.currency, symbol: true });
+      return String(v);
+    }
+
+    function editable(v) {
+      if (v === null || v === undefined || v === "") return "";
+      if (type === "money") return moneyForInput(v);
+      return String(v);
+    }
+
+    function sizeTo(chars) {
+      if (!node.style || typeof node.style.setProperty !== "function") return;
+      node.style.setProperty("--iv-ch", String(Math.max(IV_MIN_CH, chars || 0)));
+    }
+
+    function showError(key) {
+      var text = key && hasKey(key) ? t(key) : "";
+      errorNode.textContent = text;
+      errorNode.hidden = !text;
+      if (text) {
+        addClass(node, "is-invalid");
+        btn.setAttribute("aria-describedby", errorId);
+        input.setAttribute("aria-describedby", errorId);
+        input.setAttribute("aria-invalid", "true");
+      } else {
+        if (node.classList) node.classList.remove("is-invalid");
+        btn.removeAttribute("aria-describedby");
+        input.removeAttribute("aria-describedby");
+        input.removeAttribute("aria-invalid");
+      }
+    }
+
+    function paint() {
+      var text = shown(value);
+      var edit = editable(value);
+      btn.textContent = text;
+      sizeTo(Math.max(text.length, edit.length));
+      var name = labelFor(value);
+      if (name) {
+        btn.setAttribute("aria-label", name);
+        input.setAttribute("aria-label", name);
+      }
+    }
+
+    function clampNumber(n) {
+      var out = n;
+      if (min !== null && out < min) out = min;
+      if (max !== null && out > max) out = max;
+      return out;
+    }
+
+    /* "" means the value is gone — a limit typed empty and entered is a limit
+       removed, which is why there is no delete button next to it. */
+    function readInput() {
+      var raw = String(input.value === undefined ? "" : input.value).trim();
+      if (!raw) return { ok: true, value: null };
+      if (type === "text") return { ok: true, value: raw };
+      if (type === "money") {
+        var parsed = parseMoney(raw);
+        if (!parsed.ok) return { ok: false, key: parsed.error || "money.invalid" };
+        var minor = typeof parsed.minor === "number" ? parsed.minor : 0;
+        if (minor < 0 && min !== null && min >= 0) return { ok: false, key: "err.negativeAmount" };
+        return { ok: true, value: clampNumber(minor) };
+      }
+      var sign = raw.charAt(0) === "-" ? -1 : 1;
+      var digits = raw.replace(/\D/g, "");
+      if (!digits) return { ok: false, key: "err.badAmount" };
+      var whole = sign * global.parseInt(digits, 10);
+      if (whole < 0 && min !== null && min >= 0) return { ok: false, key: "err.negativeAmount" };
+      return { ok: true, value: clampNumber(whole) };
+    }
+
+    /* Optimistic: the reading changes under the finger, and only a flat false
+       from onSave puts the old number back. A view that returns nothing meant
+       "saved" — same rule as quickRow. */
+    function commit(next) {
+      var previous = value;
+      value = next;
+      paint();
+      var answer = typeof spec.onSave === "function" ? call(spec.onSave, next, api) : true;
+      if (answer === false) {
+        value = previous;
+        paint();
+        showError(saveErrorKey);
+        return false;
+      }
+      showError(null);
+      return true;
+    }
+
+    function close() {
+      if (!isOpen) return api;
+      muteBlur = true;
+      isOpen = false;
+      input.hidden = true;
+      btn.hidden = false;
+      if (node.classList) node.classList.remove("is-editing");
+      focusNode(btn);
+      muteBlur = false;
+      return api;
+    }
+
+    function open() {
+      if (isOpen) return api;
+      isOpen = true;
+      showError(null);
+      input.value = editable(value);
+      btn.hidden = true;
+      input.hidden = false;
+      addClass(node, "is-editing");
+      focusNode(input);
+      if (typeof input.select === "function") {
+        try {
+          input.select();
+        } catch (error) { /* a type the browser will not select: leave the caret */ }
+      }
+      return api;
+    }
+
+    function selectAll() {
+      if (typeof input.select !== "function") return;
+      try {
+        input.select();
+      } catch (error) { /* ignore */ }
+    }
+
+    /* fromBlur: an unreadable value must not trap focus in the box the reader
+       is trying to leave, so it reverts and closes instead of fighting back. */
+    function save(closeAfter, fromBlur) {
+      var read = readInput();
+      if (!read.ok) {
+        showError(read.key);
+        if (fromBlur) {
+          input.value = editable(value);
+          close();
+          return false;
+        }
+        focusNode(input);
+        selectAll();
+        return false;
+      }
+      if (!commit(read.value)) {
+        if (fromBlur) {
+          input.value = editable(value);
+          close();
+        }
+        return false;
+      }
+      if (closeAfter) close();
+      return true;
+    }
+
+    function cancel() {
+      input.value = editable(value);
+      showError(null);
+      close();
+    }
+
+    /* Stepping starts from what is on screen: half-typed text if the box is
+       open, the stored number if it is not. */
+    function bump(delta) {
+      var base = typeof value === "number" ? value : 0;
+      if (isOpen) {
+        var read = readInput();
+        if (read.ok && typeof read.value === "number") base = read.value;
+      }
+      var next = clampNumber(base + delta);
+      if (isOpen) {
+        input.value = editable(next);
+        selectAll();
+      }
+      commit(next);
+    }
+
+    btn.addEventListener("click", function () {
+      open();
+    });
+
+    input.addEventListener("keydown", function (event) {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        /* The row may sit inside a quickRow <form>; this Enter is ours. */
+        if (typeof event.stopPropagation === "function") event.stopPropagation();
+        save(true, false);
+        return;
+      }
+      if (event.key === "Escape") {
+        event.preventDefault();
+        /* Without this the quickRow around it would clear its fields too. */
+        if (typeof event.stopPropagation === "function") event.stopPropagation();
+        cancel();
+        return;
+      }
+      if (numeric && (event.key === "ArrowUp" || event.key === "ArrowDown")) {
+        event.preventDefault();
+        bump(event.key === "ArrowUp" ? step : -step);
+      }
+    });
+
+    input.addEventListener("blur", function () {
+      if (!isOpen || muteBlur) return;
+      save(true, true);
+    });
+
+    api = {
+      element: node,
+      control: input,
+      open: open,
+      close: close,
+      /* The three paths Enter, Esc and the arrows take, so a view that draws a
+         draggable bar over the same number steps and saves it exactly the way
+         the keyboard does rather than inventing a second rule. */
+      save: function () { return save(true, false); },
+      cancel: function () { cancel(); return api; },
+      nudge: function (direction) {
+        if (!numeric) return api;
+        bump(direction < 0 ? -step : step);
+        return api;
+      },
+      isOpen: function () { return isOpen; },
+      value: function () { return value; },
+      set: function (next) {
+        value = next === undefined ? null : next;
+        showError(null);
+        paint();
+        if (isOpen) input.value = editable(value);
+        return api;
+      },
+      setError: function (key) {
+        showError(key);
+        return api;
+      }
+    };
+
+    paint();
+    node.moonInlineValue = api;
+    return api;
+  }
+
+  /* ----------------------------------------------- phone: the typing state */
+
+  /* Two measured faults, one hook (sadeleştirme §8).
+   *
+   *   a. iOS zooms the page when a control smaller than 16px takes focus, and
+   *      the reader reads that as the screen sliding away. moon.css answers
+   *      that under 768px; nothing to do here.
+   *   b. The bottom rail is position:fixed. The virtual keyboard shortens the
+   *      visible area but a fixed element keeps measuring the old one, so the
+   *      rail lands on top of the field being typed into.
+   *
+   * So: ONE document-level focusin/focusout pair puts .is-typing on <html>
+   * while a form control holds focus, and moon.css folds the rail away for
+   * that time. Every view gets this for free and none of them has to know.
+   * The same hook brings the focused field into the middle of what is left of
+   * the viewport, once — after the keyboard has had time to come up, and never
+   * with behavior:"smooth", which during a keyboard animation looks exactly
+   * like the drift it is meant to cure.
+   */
+  var TYPING_CLASS = "is-typing";
+  var PHONE_QUERY = "(max-width: 767px)";
+  var KEYBOARD_SETTLE_MS = 260;
+
+  var NO_KEYBOARD = {
+    checkbox: true, radio: true, button: true, submit: true,
+    reset: true, file: true, image: true, range: true, color: true, hidden: true
+  };
+
+  function isTypingTarget(node) {
+    if (!node || !node.tagName) return false;
+    var tag = String(node.tagName).toUpperCase();
+    if (tag === "TEXTAREA" || tag === "SELECT") return true;
+    if (tag === "INPUT") {
+      var kind = String(node.getAttribute && node.getAttribute("type") || "text").toLowerCase();
+      return !NO_KEYBOARD[kind];
+    }
+    if (typeof node.getAttribute === "function") {
+      var editable = node.getAttribute("contenteditable");
+      if (editable !== null && editable !== "false") return true;
+    }
+    return false;
+  }
+
+  function isPhone() {
+    if (typeof global.matchMedia !== "function") return false;
+    try {
+      return !!global.matchMedia(PHONE_QUERY).matches;
+    } catch (error) {
+      return false;
+    }
+  }
+
+  var typingBound = false;
+  var typingTimer = null;
+
+  function setTyping(on) {
+    var root = doc && doc.documentElement;
+    if (!root || !root.classList) return;
+    if (on) root.classList.add(TYPING_CLASS);
+    else root.classList.remove(TYPING_CLASS);
+  }
+
+  function bindTyping() {
+    if (typingBound || !doc || typeof doc.addEventListener !== "function") return;
+    typingBound = true;
+
+    doc.addEventListener("focusin", function (event) {
+      var target = event.target;
+      if (!isTypingTarget(target)) return;
+      setTyping(true);
+      if (typingTimer) global.clearTimeout(typingTimer);
+      if (typeof global.setTimeout !== "function") return;
+      /* A modal already owns the screen and scrolls itself. */
+      if (typeof target.closest === "function" && target.closest(".dialog")) return;
+      if (!isPhone()) return;
+      typingTimer = global.setTimeout(function () {
+        typingTimer = null;
+        if (doc.activeElement !== target) return;
+        if (typeof target.scrollIntoView !== "function") return;
+        try {
+          target.scrollIntoView({ block: "center", inline: "nearest", behavior: "auto" });
+        } catch (error) {
+          target.scrollIntoView();
+        }
+      }, KEYBOARD_SETTLE_MS);
+    }, true);
+
+    doc.addEventListener("focusout", function () {
+      if (typingTimer) {
+        global.clearTimeout(typingTimer);
+        typingTimer = null;
+      }
+      /* focusin on the next field fires after this focusout, so the rail must
+         not flash back in between two fields of the same row. */
+      if (typeof global.setTimeout !== "function") {
+        setTyping(false);
+        return;
+      }
+      global.setTimeout(function () {
+        if (isTypingTarget(doc.activeElement)) return;
+        setTyping(false);
+      }, 0);
+    }, true);
+  }
+
+  bindTyping();
 
   /* --------------------------------------------------------------- dialog */
 
@@ -1854,6 +2665,211 @@
     check("dataTable wears .numbers", (" " + cls(table) + " ").indexOf(" numbers ") !== -1);
     check("dataTable table wears .table", deep(table, "table").length === 1);
 
+    /* --- quickRow: the row that replaces the entry dialog --------------- */
+    var qrSaved = [];
+    var qr = quickRow({
+      id: "qr-test",
+      memoryKey: "selftest",
+      fields: [
+        { type: "date", name: "date", label: "d", value: "2026-09-26" },
+        { type: "money", name: "amount", label: "a" },
+        { type: "select", name: "categoryId", label: "c", options: [{ value: "c_1", label: "m" }], value: "c_1" },
+        { type: "text", name: "note", label: "n" }
+      ],
+      moreFields: [{ type: "select", name: "direction", label: "y", options: ["out", "in"], value: "out" }],
+      keepOnSubmit: ["date", "categoryId"],
+      onSubmit: function (values) {
+        qrSaved.push(values);
+        return { ok: true };
+      }
+    });
+
+    check("quickRow is a form", qr.element.tagName === "FORM");
+    check("quickRow class", cls(qr.element) === "quickrow");
+    check("quickRow novalidate", qr.element.getAttribute("novalidate") !== null);
+    check("quickRow fields row", deep(qr.element, "quickrow__fields").length === 1);
+    check("quickRow submit is type=submit",
+      deep(qr.element, "quickrow__submit").length === 1 &&
+      deep(qr.element, "quickrow__submit")[0].getAttribute("type") === "submit");
+    check("quickRow submit wears .btn.is-primary",
+      cls(deep(qr.element, "quickrow__submit")[0]).indexOf("btn is-primary") === 0);
+
+    var qrMore = deep(qr.element, "quickrow__more");
+    check("quickRow more toggle", qrMore.length === 1);
+    check("quickRow more starts folded", qrMore[0].getAttribute("aria-expanded") === "false");
+    check("quickRow more is wired to the sheet",
+      qrMore[0].getAttribute("aria-controls") === "qr-test-more");
+
+    /* The folded sheet must cost no tab stop: not hidden, absent. */
+    var qrSheet = deep(qr.element, "quickrow__extra")[0];
+    check("quickRow folded sheet is empty in the DOM", qrSheet && kids(qrSheet).length === 0);
+    check("quickRow folded field still reports its value", qr.values().direction === "out");
+    qr.setMoreOpen(true);
+    check("quickRow unfolded sheet holds its field", kids(qrSheet).length === 1);
+    check("quickRow unfolded says so", qrMore[0].getAttribute("aria-expanded") === "true");
+    qr.setMoreOpen(false);
+    check("quickRow refolds to empty", kids(qrSheet).length === 0);
+
+    qr.fields.amount.control.value = "24,90";
+    qr.fields.note.control.value = "a101";
+    check("quickRow reads money as minor", qr.values().amount === 2490);
+
+    var qrOk = qr.submit();
+    check("quickRow submit reports ok", qrOk === true);
+    check("quickRow called onSubmit once", qrSaved.length === 1);
+    check("quickRow passed the parsed amount", qrSaved[0].amount === 2490);
+    /* keepOnSubmit is the whole point: the next line starts half-written. */
+    check("quickRow keeps the date", qr.fields.date.control.value === "2026-09-26");
+    check("quickRow keeps the category", qr.fields.categoryId.control.value === "c_1");
+    check("quickRow clears the amount", qr.fields.amount.control.value === "");
+    check("quickRow clears the note", qr.fields.note.control.value === "");
+
+    /* An unreadable amount never reaches onSubmit. */
+    qr.fields.amount.control.value = "abc";
+    check("quickRow refuses a bad amount", qr.submit() === false);
+    check("quickRow did not call onSubmit again", qrSaved.length === 1);
+    check("quickRow marked the field", qr.fields.amount.errorKey === "money.invalid");
+    check("quickRow printed one error line", deep(qr.element, "quickrow__error").length === 1);
+    qr.fields.amount.control.value = "";
+    qr.setErrors(null);
+    check("quickRow clears the error lane", deep(qr.element, "quickrow__error").length === 0);
+
+    /* {ok:false} holds the row and clears nothing. */
+    var qrHold = quickRow({
+      id: "qr-hold",
+      fields: [{ type: "text", name: "note", label: "n", value: "keep me" }],
+      onSubmit: function () { return { ok: false, errors: { note: "err.required" } }; }
+    });
+    check("quickRow {ok:false} reports false", qrHold.submit() === false);
+    check("quickRow {ok:false} keeps the typed value", qrHold.fields.note.control.value === "keep me");
+    check("quickRow {ok:false} shows the error", qrHold.fields.note.errorKey === "err.required");
+
+    /* A view that forgets to return must not lose the line it just saved. */
+    var qrSilent = quickRow({
+      id: "qr-silent",
+      fields: [{ type: "text", name: "note", label: "n", value: "x" }],
+      onSubmit: function () { /* no return */ }
+    });
+    check("quickRow treats no return as saved", qrSilent.submit() === true);
+    check("quickRow cleared after a silent save", qrSilent.fields.note.control.value === "");
+
+    /* --- inlineValue: edit in place, no dialog, no layout jump ---------- */
+    var ivSeen = [];
+    var iv = inlineValue({
+      value: 600000,
+      type: "money",
+      label: "limit",
+      step: 10000,
+      min: 0,
+      format: function (v) { return v === null ? "" : "L" + v; },
+      onSave: function (v) { ivSeen.push(v); return true; }
+    });
+
+    check("inlineValue wrapper", cls(iv.element) === "inlinevalue");
+    var ivBtn = deep(iv.element, "inlinevalue__btn")[0];
+    var ivInput = deep(iv.element, "inlinevalue__input")[0];
+    check("inlineValue closed half is a button", ivBtn && ivBtn.tagName === "BUTTON");
+    check("inlineValue closed button is type=button", ivBtn.getAttribute("type") === "button");
+    check("inlineValue open half is an input", ivInput && ivInput.tagName === "INPUT");
+    /* Both halves stay in the one grid cell so the column cannot twitch. */
+    check("inlineValue keeps both halves in the DOM", kids(iv.element).length === 3);
+    check("inlineValue uses format()", ivBtn.textContent === "L600000");
+    check("inlineValue labels both halves",
+      ivBtn.getAttribute("aria-label") === "limit" && ivInput.getAttribute("aria-label") === "limit");
+    check("inlineValue money asks for a decimal keypad", ivInput.getAttribute("inputmode") === "decimal");
+    check("inlineValue starts closed", iv.isOpen() === false);
+
+    iv.open();
+    check("inlineValue opens", iv.isOpen() === true);
+    check("inlineValue opens on the editable form", ivInput.value === "6000,00" || ivInput.value === "6000.00");
+
+    iv.control.value = "7000";
+    iv.close();
+    check("inlineValue closes", iv.isOpen() === false);
+    iv.set(700000);
+    check("inlineValue set() repaints", ivBtn.textContent === "L700000");
+    check("inlineValue set() does not save", ivSeen.length === 0);
+
+    /* The arrows move the number without a mouse and save it. */
+    var ivStep = [];
+    var ivArrow = inlineValue({
+      value: 600000,
+      type: "money",
+      label: "l",
+      step: 10000,
+      min: 0,
+      onSave: function (v) { ivStep.push(v); return true; }
+    });
+    ivArrow.nudge(1);
+    check("inlineValue steps up by step", ivArrow.value() === 610000);
+    ivArrow.nudge(-1);
+    ivArrow.nudge(-1);
+    check("inlineValue steps down by step", ivArrow.value() === 590000);
+    check("inlineValue saved every step", ivStep.length === 3);
+    /* min is a floor, not a suggestion: the arrows cannot walk it negative. */
+    ivArrow.set(5000);
+    ivArrow.nudge(-1);
+    check("inlineValue clamps at min", ivArrow.value() === 0);
+
+    /* An empty value entered is the value removed — this is how a limit comes
+       off without a delete button and without a confirm. */
+    var ivCleared = [];
+    var ivClear = inlineValue({
+      value: 500,
+      type: "money",
+      label: "l",
+      onSave: function (v) { ivCleared.push(v); return true; }
+    });
+    ivClear.open();
+    ivClear.control.value = "";
+    check("inlineValue empty saves as null",
+      ivClear.save() === true && ivCleared.length === 1 && ivCleared[0] === null);
+    check("inlineValue closes after saving", ivClear.isOpen() === false);
+
+    /* onSave:false puts the old number back and says so. */
+    var ivReject = inlineValue({
+      value: 1000,
+      type: "number",
+      label: "n",
+      min: 0,
+      onSave: function () { return false; }
+    });
+    check("inlineValue number asks for a numeric keypad",
+      deep(ivReject.element, "inlinevalue__input")[0].getAttribute("inputmode") === "numeric");
+    ivReject.open();
+    ivReject.control.value = "2500";
+    check("inlineValue refused save reports false", ivReject.save() === false);
+    check("inlineValue refused save restores the old value", ivReject.value() === 1000);
+    check("inlineValue refused save shows an error",
+      deep(ivReject.element, "inlinevalue__error")[0].hidden === false);
+
+    /* A negative where min is 0 is a typo, not a direction (schema §2). */
+    var ivNeg = inlineValue({ value: 100, type: "number", label: "n", min: 0, onSave: function () { return true; } });
+    ivNeg.open();
+    ivNeg.control.value = "-5";
+    check("inlineValue refuses a negative under min", ivNeg.save() === false);
+    check("inlineValue kept the old value", ivNeg.value() === 100);
+
+    var ivCancel = inlineValue({ value: 42, type: "number", label: "n", onSave: function () { return true; } });
+    ivCancel.open();
+    ivCancel.control.value = "99";
+    ivCancel.cancel();
+    check("inlineValue Esc path discards", ivCancel.value() === 42);
+    check("inlineValue Esc path closes", ivCancel.isOpen() === false);
+
+    /* --- the phone typing hook: one class name, named once -------------- */
+    check("typing class is published", TYPING_CLASS === "is-typing");
+    check("a text input opens a keyboard", isTypingTarget({
+      tagName: "INPUT", getAttribute: function () { return "text"; }
+    }) === true);
+    check("a checkbox does not", isTypingTarget({
+      tagName: "INPUT", getAttribute: function () { return "checkbox"; }
+    }) === false);
+    check("a select does", isTypingTarget({ tagName: "SELECT", getAttribute: function () { return null; } }) === true);
+    check("a button does not", isTypingTarget({
+      tagName: "BUTTON", getAttribute: function () { return null; }
+    }) === false);
+
     /* --- every key this file names must exist in the catalogue ---------- */
     var I18n = Moon.I18n;
     if (I18n && typeof I18n.has === "function") {
@@ -1873,12 +2889,17 @@
 
   Moon.UI = {
     _selftest: selftest,
+    /* The class moon.css folds the phone rail away with, and the only way a
+       view or a test can name that state without guessing the string. */
+    TYPING_CLASS: TYPING_CLASS,
     section: section,
     hero: hero,
     moneyCell: moneyCell,
     mark: mark,
     field: field,
     form: form,
+    quickRow: quickRow,
+    inlineValue: inlineValue,
     dialog: dialog,
     confirm: confirmDialog,
     undoStrip: undoStrip,

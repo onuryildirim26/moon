@@ -53,6 +53,10 @@
 
     "common.save": "Kaydet",
     "common.cancel": "Vazgeç",
+    "common.more": "Daha",
+    "common.details": "Ayrıntılar",
+    "common.notSaved": "Değişiklik kaydedilmedi, eski değer geri alındı.",
+    "limits.edit": "Dönem limitini değiştir: {amount}",
     "common.delete": "Sil",
     "common.edit": "Düzenle",
     "common.copy": "Kopyala",

@@ -1,4 +1,26 @@
-/* Moon — the Limits section (#limitler; contract §13, addendum E10/E11).
+/* Moon — the Limits section (#limitler; contract §13, addendum E10/E11,
+ * simplification §4).
+ *
+ * NO DIALOG LIVES HERE ANY MORE. A limit is a figure the reader changes over
+ * and over, and paying a modal for it — open, wait, fill, save, close — is the
+ * single most expensive way to type four digits. Every write on this screen is
+ * now made in place:
+ *
+ *   - the limit on each scale row IS a Moon.UI.inlineValue: click the number,
+ *     type, Enter. Empty + Enter removes the limit (onSave(null)), which is
+ *     why there is no "remove" button and no confirmation next to it.
+ *   - the scale is DRAGGABLE: the grip sits on the 100% end cap that charts.js
+ *     draws — the end of the filled track — and pulling it right or left moves
+ *     the limit under the finger. It is one pointer path for mouse and touch
+ *     alike, it carries role="slider" with its own aria values, and the arrow
+ *     keys do the same job, so the drag is an ADDITION and never the only way.
+ *   - category management (rename, fix, archive) is inline too: the name is an
+ *     inlineValue, the two marks are pressed buttons. Deleting a category asks
+ *     nothing and offers an eight-second undo band instead, because nothing is
+ *     destroyed: Moon.Model moves the entries to the catch-all and this file
+ *     keeps enough of a snapshot to put every one of them back.
+ *   - the adder at the bottom is a Moon.UI.quickRow, so Enter writes the
+ *     category and parks the caret back on the name for the next one.
  *
  * Three readings, in reading order:
  *   0. beside the section title, one quiet control that offers to read the
@@ -16,12 +38,17 @@
  * The view only reads. Every write goes through Moon.Model, never through
  * Moon.Store, and the router re-renders this whole file on state:change and
  * lang:change — so render() clears its root, keeps no state between calls and
- * may run any number of times.
+ * may run any number of times. That redraw is also why every inline control
+ * leaves a `data-focus` stamp behind: a write destroys the control that made
+ * it, and the stamp is how the focus finds its way back to the same number.
  *
- * Two deliberate seams, both documented where they are used:
+ * Three deliberate seams, all documented where they are used:
  *   - ui.js and moon.css were written in parallel and spell a handful of class
  *     names differently. Neither file is ours to edit, so the stylesheet's
  *     spelling is added to the nodes Moon.UI hands back.
+ *   - charts.js is not ours either, so the grip is measured against the
+ *     meter's documented geometry (E4: trackWidth and readoutWidth are one
+ *     setting) from the outside and the listener is installed on our side.
  *   - the brief names i18n keys the catalogue does not carry yet
  *     (limits.drift.*, limits.year.*, limits.category.*). Each is asked for
  *     first, so a later catalogue wins automatically, and falls back to the
@@ -41,10 +68,30 @@
   var TRACK_WIDTH = 240;
   var READOUT_WIDTH = 132;
 
+  /* The rest of the meter's geometry, read off charts.js rather than guessed:
+     the viewBox is labelWidth + trackWidth + readoutWidth + 8 and the track
+     starts at labelWidth + 4. We pass no labelWidth, so it is 0. The spill is
+     allowed max(12, readoutWidth - 8) and the scale only renormalises above
+     150% — above that one unit of track is worth (track + spill) / ratio.
+     This is the whole conversion the drag needs: pixel -> ratio -> amount. */
+  var VIEW_WIDTH = TRACK_WIDTH + READOUT_WIDTH + 8;
+  var TRACK_X0 = 4;
+  var MAX_SPILL = Math.max(12, READOUT_WIDTH - 8);
+  var RENORM_AT = 1.5;
+
+  /* 100 TL a step, 10 TL once the limit is under 500 TL — a 300 TL limit moved
+     in hundreds would only have three usable positions. */
+  var STEP_COARSE = 10000;
+  var STEP_FINE = 1000;
+  var FINE_BELOW = 50000;
+
+  /* A finger is not a pixel: the grip is a 44px target centred on a 1px cap. */
+  var GRIP_PX = 44;
+
   /* The suggestion block (Moon.Model.suggestLimits) is asked for, never
      standing: it opens from one control beside the section title and closes
-     again the moment it has done its work. These four variables are the whole
-     of its state, and every one of them survives a re-render on purpose —
+     again the moment it has done its work. These variables are the whole of
+     its state, and every one of them survives a re-render on purpose —
      the router redraws this file on state:change and lang:change, and a reader
      who switched language mid-review must not lose their ticks. */
   var SUGGEST_ID = "limits-suggest";
@@ -56,11 +103,22 @@
   var suggestPicks = null;
   /* How many limits the last write produced, read once by the next render. */
   var appliedCount = 0;
-  /* Opening and closing rebuild the control that was just pressed, so the
-     focus has to be put back by hand or it falls to <body>. */
-  var refocusToggle = false;
-  var toggleNode = null;
   var lastRoot = null;
+
+  /* Every inline write replaces the control that made it, because the write
+     emits state:change and the router redraws the section. This is the stamp
+     the next render looks for to hand the focus back. */
+  var pendingFocus = null;
+
+  /* The adder keeps its kind and its fixed mark between writes. keepOnSubmit
+     does that within one quickRow; this does it across the redraw that every
+     write brings with it. */
+  var addMemory = { kind: "expense", fixed: false };
+
+  /* True only while a pointer is dragging a grip: text selection is turned off
+     on <html> for that time and has to be turned back on even if the reader
+     navigates away mid-drag. */
+  var dragLock = false;
 
   /* ---------------------------------------------------------------- basics */
 
@@ -120,10 +178,37 @@
     return node;
   }
 
+  function css(node, prop, value) {
+    if (!node || !node.style || typeof node.style.setProperty !== "function") return node;
+    node.style.setProperty(prop, value);
+    return node;
+  }
+
+  function focusIt(node) {
+    if (!node || typeof node.focus !== "function") return false;
+    try {
+      node.focus();
+    } catch (error) {
+      log(error);
+      return false;
+    }
+    return true;
+  }
+
   function settings() {
     var store = Moon.Store;
     var state = store && store.state ? store.state : null;
     return state && state.settings ? state.settings : {};
+  }
+
+  /* Read-only peek at a bucket Moon.Model exposes no reader for. The view
+     never writes here (E10) — the recurring rules of a category being deleted
+     have to be remembered so the undo band can point them back. */
+  function bucket(name) {
+    var store = Moon.Store;
+    var state = store && store.state ? store.state : null;
+    var rows = state ? state[name] : null;
+    return Object.prototype.toString.call(rows) === "[object Array]" ? rows : [];
   }
 
   function lang() {
@@ -223,7 +308,7 @@
     if (!/^\d{4}-\d{2}$/.test(String(periodKey || ""))) return "";
     var abbreviated = formatDay(periodKey + "-01")
       .replace(/[0-9]/g, "")
-      .replace(/[.,\s ]+/g, " ")
+      .replace(/[.,\s ]+/g, " ")
       .replace(/^\s+|\s+$/g, "");
     if (abbreviated) return abbreviated;
     return fullMonth(periodKey).replace(/\s*\d{4}\s*/, "").replace(/^\s+|\s+$/g, "");
@@ -263,10 +348,6 @@
       onClick();
     }));
     return node;
-  }
-
-  function prose(text) {
-    return dom.el("p", { "class": "prose", text: text });
   }
 
   function small(text) {
@@ -405,6 +486,332 @@
     return isFinite(ratio) ? Math.round(Math.max(0, Math.min(1, ratio)) * 100) : 0;
   }
 
+  function hasLimit(row) {
+    return !!row && row.limit !== null && row.limit !== undefined && row.limit > 0;
+  }
+
+  /* ---------------------------------------------------------- focus stamps */
+
+  function focusTag(kind, id) {
+    return kind + ":" + (id === null || id === undefined ? "" : String(id));
+  }
+
+  function stamp(node, tag) {
+    if (node && typeof node.setAttribute === "function") node.setAttribute("data-focus", tag);
+    return node;
+  }
+
+  /* Compared rather than selected: a category id is generated text, and
+     building a selector out of it would be one escaping bug waiting to
+     happen. */
+  function restoreFocus(root) {
+    var want = pendingFocus;
+    pendingFocus = null;
+    if (!want || !root) return;
+    var found = null;
+    dom.qsa("[data-focus]", root).forEach(function (candidate) {
+      if (!found && candidate.getAttribute("data-focus") === want) found = candidate;
+    });
+    if (found) focusIt(found);
+  }
+
+  /* ----------------------------------------------------- the limit, in place */
+
+  function stepFor(limit) {
+    var value = typeof limit === "number" && isFinite(limit) ? limit : 0;
+    return value > 0 && value < FINE_BELOW ? STEP_FINE : STEP_COARSE;
+  }
+
+  function snap(amount, step) {
+    var size = step > 0 ? step : STEP_COARSE;
+    var value = Math.round((Number(amount) || 0) / size) * size;
+    return value < size ? size : value;
+  }
+
+  /* The one write every inline path on this row goes through, so typing a
+     number, dragging the bar and pressing an arrow key cannot disagree about
+     what "saved" means. Returns false the way inlineValue asks: the old value
+     comes back and the row says it did not save. */
+  function writeLimit(categoryId, next, focus) {
+    var Model = model();
+    if (!categoryId || !Model || typeof Model.setLimit !== "function") return false;
+
+    var previous = read("limitFor", categoryId, null);
+    /* Empty or zero means the limit is gone. This is the only way to remove
+       one, and it is deliberately not guarded by a question: the figure is
+       still in the undo band for eight seconds. */
+    var amount = next === null || next === undefined || next === 0 ? null : next;
+
+    if (amount !== null) {
+      if (typeof amount !== "number" || !isFinite(amount) || amount < 0) return false;
+      amount = Math.round(amount);
+      if (typeof Model.validateLimit === "function") {
+        var check = read("validateLimit", { categoryId: categoryId, amount: amount }, null);
+        if (check && check.ok === false) return false;
+      }
+    }
+    if (amount === previous) return true;
+
+    pendingFocus = focus || focusTag("limit", categoryId);
+    var written = Model.setLimit(categoryId, amount);
+    /* setLimit answers null both when it removed a limit and when it refused
+       one, so only the setting case can read null as a failure. */
+    if (amount !== null && written === null) {
+      pendingFocus = null;
+      return false;
+    }
+    strip(amount === null ? "limits.removed" : "limits.saved", null, function () {
+      Model.setLimit(categoryId, previous);
+    });
+    return true;
+  }
+
+  /* The reading IS the control: click it, type, Enter. Closed and open are the
+     same width (ui.js sizes both halves from one --iv-ch), so the column does
+     not twitch when a row goes into edit. */
+  function limitCell(row) {
+    var UI = Moon.UI;
+    if (!UI || typeof UI.inlineValue !== "function") return null;
+    var id = row.categoryId;
+    var api;
+    try {
+      api = UI.inlineValue({
+        value: hasLimit(row) ? row.limit : null,
+        type: "money",
+        currency: currency(),
+        labelKey: "limits.edit",
+        labelParams: function (value) {
+          return { amount: value === null || value === undefined ? t("common.none") : money(value) };
+        },
+        /* A row without a limit must not stand as an empty button: it says
+           what it is for, and that sentence is also the way to set one. */
+        format: function (value) {
+          if (value === null || value === undefined || value === "") {
+            return t("limits.form.title.new");
+          }
+          return money(value);
+        },
+        step: stepFor(row.limit),
+        min: 0,
+        onSave: function (value) {
+          return writeLimit(id, value, focusTag("limit", id));
+        }
+      });
+    } catch (error) {
+      log(error);
+      return null;
+    }
+    stamp(dom.qs(".inlinevalue__btn", api.element), focusTag("limit", id));
+    return api;
+  }
+
+  /* --------------------------------------------------- the draggable scale */
+
+  /* charts.js keeps one unit of track worth the same money up to 150% so that
+     105% and 140% look different (G1); past that it squeezes the whole run
+     into the room left. The drag has to speak the same scale or the grip would
+     not sit on the cap it is grabbing. */
+  function trackUnit(ratio) {
+    var value = Number(ratio);
+    if (!isFinite(value) || value <= RENORM_AT) return TRACK_WIDTH;
+    return (TRACK_WIDTH + MAX_SPILL) / value;
+  }
+
+  function ratioOf(row) {
+    if (!hasLimit(row)) return 0;
+    var ratio = (row.spent || 0) / row.limit;
+    return isFinite(ratio) && ratio > 0 ? ratio : 0;
+  }
+
+  /* pixel -> ratio -> amount. The grip starts on the cap, where the ratio is
+     exactly 1 and the amount is exactly the limit it was grabbed at, so one
+     drag spans 0 to about 1.5 limits and two drags compose. */
+  function amountAt(viewX, base, unit) {
+    var x = Number(viewX);
+    if (!isFinite(x)) x = TRACK_X0;
+    if (x < TRACK_X0) x = TRACK_X0;
+    if (x > VIEW_WIDTH) x = VIEW_WIDTH;
+    if (!(unit > 0) || !(base > 0)) return base > 0 ? base : 0;
+    return (x - TRACK_X0) / unit * base;
+  }
+
+  function percentFor(amount, base, unit) {
+    var x = TRACK_X0;
+    if (base > 0 && unit > 0) x = TRACK_X0 + (amount / base) * unit;
+    if (!isFinite(x) || x < 0) x = 0;
+    if (x > VIEW_WIDTH) x = VIEW_WIDTH;
+    return (x / VIEW_WIDTH) * 100;
+  }
+
+  /* Text selection during a drag turns the whole row blue and makes the
+     gesture look like a failed click. Cleared again by hand, including from
+     destroy() — a reader may navigate away mid-drag. */
+  function setDragLock(on) {
+    var root = global.document && global.document.documentElement;
+    dragLock = !!on;
+    if (!root || !root.style || typeof root.style.setProperty !== "function") return;
+    if (on) {
+      root.style.setProperty("user-select", "none");
+      root.style.setProperty("-webkit-user-select", "none");
+    } else if (typeof root.style.removeProperty === "function") {
+      root.style.removeProperty("user-select");
+      root.style.removeProperty("-webkit-user-select");
+    }
+  }
+
+  function gripFor(row, iv) {
+    if (!hasLimit(row)) return null;
+    var id = row.categoryId;
+    var unit = trackUnit(ratioOf(row));
+    var ceiling = amountAt(VIEW_WIDTH, row.limit, unit);
+
+    var node = dom.el("span", {
+      "class": "meter__grip",
+      role: "slider",
+      tabindex: "0",
+      "aria-orientation": "horizontal",
+      style: {
+        position: "absolute",
+        top: "0",
+        bottom: "0",
+        width: GRIP_PX + "px",
+        "min-height": GRIP_PX + "px",
+        "margin-left": (-GRIP_PX / 2) + "px",
+        cursor: "ew-resize",
+        /* Without this a touch drag scrolls the page instead. */
+        "touch-action": "none"
+      }
+    });
+    stamp(node, focusTag("grip", id));
+
+    function paint(amount) {
+      css(node, "left", percentFor(amount, row.limit, unit) + "%");
+      node.setAttribute("aria-valuenow", String(Math.round(amount)));
+      node.setAttribute("aria-valuemin", "0");
+      node.setAttribute("aria-valuemax", String(Math.round(Math.max(ceiling, amount))));
+      /* The number a screen reader should hear, and the tooltip a pointer
+         hovering the cap should see. Both come from the catalogue. */
+      var label = t("limits.edit", { amount: money(amount) });
+      node.setAttribute("aria-valuetext", money(amount));
+      node.setAttribute("title", label);
+      node.setAttribute("aria-label", label);
+    }
+
+    paint(row.limit);
+
+    var drag = null;
+
+    function host() {
+      return node.parentNode;
+    }
+
+    function release(event) {
+      if (!node.releasePointerCapture || !event || event.pointerId === undefined) return;
+      try {
+        node.releasePointerCapture(event.pointerId);
+      } catch (error) { /* already gone */ }
+    }
+
+    function revert(base) {
+      paint(base);
+      if (iv && typeof iv.set === "function") iv.set(base);
+    }
+
+    node.addEventListener("pointerdown", guard(function (event) {
+      if (event.button !== undefined && event.button !== null && event.button !== 0) return;
+      /* Read the figure fresh: this node may have outlived one redraw. */
+      var base = read("limitFor", id, null);
+      if (!base || !(base > 0)) return;
+      var box = host();
+      if (!box || typeof box.getBoundingClientRect !== "function") return;
+      var rect = box.getBoundingClientRect();
+      if (!rect || !(rect.width > 0)) return;
+
+      event.preventDefault();
+      drag = {
+        pointerId: event.pointerId,
+        rect: rect,
+        base: base,
+        unit: unit,
+        step: stepFor(base),
+        ceiling: amountAt(VIEW_WIDTH, base, unit),
+        live: base,
+        moved: false
+      };
+      ceiling = drag.ceiling;
+      if (node.setPointerCapture && event.pointerId !== undefined) {
+        try {
+          node.setPointerCapture(event.pointerId);
+        } catch (error) { /* fall back to the events that still reach us */ }
+      }
+      setDragLock(true);
+      focusIt(node);
+    }));
+
+    node.addEventListener("pointermove", guard(function (event) {
+      if (!drag) return;
+      if (event.pointerId !== undefined && event.pointerId !== drag.pointerId) return;
+      event.preventDefault();
+      var viewX = (event.clientX - drag.rect.left) / drag.rect.width * VIEW_WIDTH;
+      var amount = snap(amountAt(viewX, drag.base, drag.unit), drag.step);
+      var top = Math.max(drag.step, Math.round(drag.ceiling));
+      if (amount > top) amount = top;
+      if (amount === drag.live) return;
+      drag.live = amount;
+      drag.moved = true;
+      paint(amount);
+      /* The reading changes under the finger; the bar itself is redrawn once,
+         by the router, after the write. */
+      if (iv && typeof iv.set === "function") iv.set(amount);
+    }));
+
+    function finish(event, save) {
+      if (!drag) return;
+      var amount = drag.live;
+      var base = drag.base;
+      var moved = drag.moved;
+      drag = null;
+      setDragLock(false);
+      release(event);
+      if (!save || !moved || amount === base) {
+        revert(base);
+        return;
+      }
+      if (!writeLimit(id, amount, focusTag("grip", id))) revert(base);
+    }
+
+    node.addEventListener("pointerup", guard(function (event) {
+      finish(event, true);
+    }));
+    node.addEventListener("pointercancel", guard(function (event) {
+      finish(event, false);
+    }));
+    node.addEventListener("lostpointercapture", guard(function (event) {
+      finish(event, true);
+    }));
+
+    /* The drag is an addition. This is the path that always works. */
+    node.addEventListener("keydown", guard(function (event) {
+      var pressed = event.key;
+      var steps = 0;
+      if (pressed === "ArrowRight" || pressed === "ArrowUp") steps = 1;
+      else if (pressed === "ArrowLeft" || pressed === "ArrowDown") steps = -1;
+      else if (pressed === "PageUp") steps = 10;
+      else if (pressed === "PageDown") steps = -10;
+      else return;
+
+      event.preventDefault();
+      var base = read("limitFor", id, null);
+      if (!base || !(base > 0)) return;
+      var size = stepFor(base);
+      var next = snap(base + steps * size, size);
+      if (next === base) return;
+      writeLimit(id, next, focusTag("grip", id));
+    }));
+
+    return node;
+  }
+
   /* ------------------------------------------------------------- the scale */
 
   /* driftState reads "am I ahead of my own pace", which is the question people
@@ -452,9 +859,10 @@
     return dom.svg(markup);
   }
 
-  /* One row: name, scale, reading. The whole row is the control that edits the
-     limit, so it is a real button (.btn.is-row is the house full-width row) and
-     works from the keyboard without a roving index. */
+  /* One row: name, scale, reading. Nothing wraps it any more — the row used to
+     be one big button that opened a dialog, and now the two things worth
+     touching are inside it. Keeping the .meter nodes as siblings is also what
+     lets moon.css draw its 1px rule between them (.meter + .meter). */
   function scaleRow(row, ctx) {
     var over = isOver(row);
     var classes = ["meter"];
@@ -470,28 +878,33 @@
     var middle = dom.el("span", { "class": "meter__scale" });
     var readout = dom.el("span", { "class": "meter__readout" });
 
-    if (row.limit === null || row.limit === undefined) {
-      /* No limit: the row must not pretend to be a scale (E4). It shows what
-         went out and offers the one thing missing. */
-      middle.appendChild(moneyCell(row.spent, "is-dim"));
-      readout.appendChild(dom.el("span", {
-        "class": "meter__drift",
-        text: tk("limits.noLimit", "limits.form.title.new")
-      }));
-    } else {
+    var iv = limitCell(row);
+
+    if (hasLimit(row)) {
       var svg = meterSvg(row, ctx);
-      if (svg) middle.appendChild(svg);
-      readout.appendChild(dom.el("span", { "class": "meter__drift", text: driftText(row) }));
+      if (svg) {
+        /* The grip is positioned against this box, which is exactly as wide as
+           the SVG's own viewBox — so the cap's place in the drawing is a plain
+           percentage and no measuring is needed to draw it. */
+        var track = dom.el("span", {
+          "class": "meter__track",
+          style: { position: "relative", display: "block" }
+        }, svg);
+        var grip = gripFor(row, iv);
+        if (grip) track.appendChild(grip);
+        middle.appendChild(track);
+      }
+    } else {
+      /* No limit: the row must not pretend to be a scale (E4). It shows what
+         went out, and the reading beside it offers the one thing missing. */
+      middle.appendChild(moneyCell(row.spent, "is-dim"));
     }
 
-    var inner = dom.el("span", { "class": classes.join(" "), style: { width: "100%" } },
-      [name, middle, readout]);
+    if (iv) readout.appendChild(iv.element);
+    var drift = hasLimit(row) ? driftText(row) : "";
+    if (drift) readout.appendChild(dom.el("span", { "class": "meter__drift", text: drift }));
 
-    var node = dom.el("button", { type: "button", "class": "btn is-row" }, inner);
-    node.addEventListener("click", guard(function () {
-      openLimitDialog(row.categoryId);
-    }));
-    return node;
+    return dom.el("div", { "class": classes.join(" ") }, [name, middle, readout]);
   }
 
   function scaleList(rows, ctx) {
@@ -502,173 +915,7 @@
     return list;
   }
 
-  /* ------------------------------------------------------- the limit dialog */
-
-  function fail(api, errors) {
-    api.setErrors(errors);
-    api.focusFirstError();
-  }
-
-  function openLimitDialog(categoryId) {
-    var Model = model();
-    var UI = Moon.UI;
-    if (!Model || !UI || typeof UI.dialog !== "function") return;
-
-    var cats = read("categories", { kind: "expense" }, []);
-    var options = cats.map(function (cat) {
-      return { value: cat.id, label: cat.name };
-    });
-    /* A limit hangs off a category; with none there is nothing to open. */
-    if (!options.length) return;
-
-    var startId = categoryId && Model.categoryById(categoryId) ? categoryId : options[0].value;
-    var current = read("limitFor", startId, null);
-
-    var catField = UI.field({
-      type: "select",
-      name: "categoryId",
-      labelKey: "form.category",
-      options: options,
-      value: startId,
-      required: true
-    });
-    var amountField = UI.field({
-      type: "money",
-      name: "amount",
-      labelKey: "limits.form.amount",
-      hintKey: "limits.form.amount.hint",
-      value: current === null ? "" : current,
-      currency: currency(),
-      required: true,
-      autofocus: true
-    });
-
-    var box = null;
-
-    function close() {
-      if (box) box.close();
-    }
-
-    function chosenId() {
-      var field = catField.moonField;
-      return field ? field.read() : startId;
-    }
-
-    function typedAmount() {
-      var field = amountField.moonField;
-      return field ? String(field.control.value || "").replace(/^\s+|\s+$/g, "") : "";
-    }
-
-    function save(values, api) {
-      var id = values.categoryId;
-      var minor = values.amount;
-
-      if (!typedAmount()) {
-        fail(api, { amount: "err.required" });
-        return;
-      }
-      if (minor === null || minor === undefined) {
-        fail(api, { amount: "money.invalid" });
-        return;
-      }
-      /* E1: parse answers SIGNED, and the schema has no negative limit. Say
-         where the sign belongs instead of quietly dropping it. */
-      if (minor < 0) {
-        fail(api, { amount: "err.negativeAmount" });
-        return;
-      }
-      if (minor === 0) {
-        fail(api, { amount: "err.zeroAmount" });
-        return;
-      }
-
-      var check = Model.validateLimit({ categoryId: id, amount: minor });
-      if (!check.ok) {
-        fail(api, check.errors);
-        return;
-      }
-
-      var previous = read("limitFor", id, null);
-      /* Close BEFORE writing: the write emits state:change, the router redraws
-         the section underneath, and a modal must not outlive its own screen. */
-      close();
-      Model.setLimit(id, minor);
-      strip("limits.saved", null, function () {
-        Model.setLimit(id, previous);
-      });
-    }
-
-    function remove() {
-      var id = chosenId();
-      var previous = read("limitFor", id, null);
-      close();
-      if (previous === null) return;
-      Model.setLimit(id, null);
-      strip("limits.removed", null, function () {
-        Model.setLimit(id, previous);
-      });
-    }
-
-    var actions = [
-      { labelKey: "common.save", kind: "primary", "class": "is-primary", type: "submit" }
-    ];
-    if (current !== null) {
-      actions.push({
-        labelKey: "limits.form.remove",
-        kind: "danger",
-        "class": "is-danger",
-        onClick: remove
-      });
-    }
-    actions.push({
-      labelKey: "common.cancel",
-      kind: "ghost",
-      "class": "is-quiet",
-      onClick: close
-    });
-
-    var form = UI.form({
-      fields: [catField, amountField],
-      actions: actions,
-      onSubmit: save
-    });
-    /* .form__fields carries no spacing in moon.css; .form__row does. */
-    addClass(dom.qs(".form__fields", form.element), "form__row");
-
-    if (catField.moonField) {
-      catField.moonField.control.addEventListener("change", guard(function () {
-        var id = chosenId();
-        var limit = read("limitFor", id, null);
-        form.reset({ categoryId: id, amount: limit === null ? "" : limit });
-      }));
-    }
-
-    var body = [];
-    var row = rowFor(startId);
-    if (row && isOver(row)) {
-      /* The sentence the design asks for on an overrun: the number, and the
-         reminder that an unrealistic limit is a limit worth changing. */
-      body.push(prose(t("limits.overLine", { name: row.name, amount: money(overBy(row)) })));
-    }
-    body.push(form.element);
-
-    box = UI.dialog({
-      "class": "dialog--limit",
-      titleKey: current === null ? "limits.form.title.new" : "limits.form.title.edit",
-      body: body
-    });
-    box.open();
-  }
-
-  function rowFor(categoryId) {
-    var rows = read("budgetRows", activePeriod(), []);
-    for (var i = 0; i < rows.length; i += 1) {
-      if (rows[i] && rows[i].categoryId === categoryId) return rows[i];
-    }
-    return null;
-  }
-
-  /* ------------------------------------------------- the budget suggestion */
+  /* ------------------------------------------------------- the budget suggestion */
 
   /* Opening and closing the block change nothing in the Store, so the router
      never hears about them and the section has to redraw itself. Safe to ask
@@ -688,14 +935,14 @@
     /* A fresh reading starts from the model's own defaults. */
     suggestPicks = null;
     appliedCount = 0;
-    refocusToggle = true;
+    pendingFocus = focusTag("suggest", "");
     redraw();
   }
 
   function closeSuggest() {
     suggestOpen = false;
     suggestPicks = null;
-    refocusToggle = true;
+    pendingFocus = focusTag("suggest", "");
     redraw();
   }
 
@@ -703,7 +950,7 @@
     var data = read("suggestLimits", undefined, null) || {};
     return {
       basis: data.basis || {},
-      rows: Array.isArray(data.rows) ? data.rows : []
+      rows: Object.prototype.toString.call(data.rows) === "[object Array]" ? data.rows : []
     };
   }
 
@@ -779,7 +1026,7 @@
        this file's state by then or it would come straight back. */
     suggestOpen = false;
     suggestPicks = null;
-    refocusToggle = true;
+    pendingFocus = focusTag("suggest", "");
 
     var written = 0;
     try {
@@ -870,6 +1117,7 @@
     /* Only while the block is on the page: aria-controls pointing at an id that
        does not exist is a dangling reference, not a disclosure. */
     if (suggestOpen) node.setAttribute("aria-controls", SUGGEST_ID);
+    stamp(node, focusTag("suggest", ""));
     return node;
   }
 
@@ -928,8 +1176,8 @@
     var body = [];
 
     /* The empty sentence stands above the limitless rows it is talking about
-       ("these rows turn into scales the moment you set a limit"), and the
-       category list below is still the way to set one. */
+       ("these rows turn into scales the moment you set a limit"), and every
+       one of those rows now carries the way to set one. */
     var anyLimit = groups.limited > 0 || ((ctx.summary || {}).limitTotal || 0) > 0;
 
     /* The count of what the last write produced, said once. It stands above the
@@ -942,15 +1190,13 @@
     if (suggestOpen) body.push(suggestBlock());
 
     if (!anyLimit) {
+      /* No action on the empty page any more: the action is the reading on
+         every row below it, which reads "Limit koy" until it carries a number. */
       body.push(emptyBlock({
         headingKey: "empty.limits.heading",
         bodyKey: "empty.limits.body",
         ghost: true,
-        columns: 3,
-        actions: [{
-          labelKey: "limits.form.title.new",
-          onClick: function () { openLimitDialog(null); }
-        }]
+        columns: 3
       }));
     }
 
@@ -965,7 +1211,7 @@
     /* The head carries the total reading and, beside it, the one control that
        opens the suggestion block. .switch is the house row for "a control with
        its label", which is exactly what these two are. */
-    toggleNode = suggestToggle();
+    var toggleNode = suggestToggle();
     var asideKids = [];
     if (anyLimit) {
       asideKids.push(dom.el("span", { "class": "num", text: limitTotals(ctx) }));
@@ -1049,54 +1295,48 @@
 
   /* --------------------------------------------------- section: categories */
 
-  function renameCategory(cat) {
-    var Model = model();
+  /* moon.css aligns an inlineValue to the right, which is the only sane place
+     for a number and the wrong one for a name. */
+  function leftAlign(api) {
+    if (!api || !api.element) return api;
+    dom.qsa(".inlinevalue__btn, .inlinevalue__input", api.element).forEach(function (half) {
+      css(half, "text-align", "left");
+    });
+    return api;
+  }
+
+  function nameCell(cat) {
     var UI = Moon.UI;
-    if (!Model || !UI) return;
-
-    var nameField = UI.field({
-      type: "text",
-      name: "name",
-      labelKey: "form.name",
-      value: cat.name,
-      required: true,
-      maxLength: 200,
-      autofocus: true
-    });
-    var box = null;
-
-    var form = UI.form({
-      fields: [nameField],
-      actions: [
-        { labelKey: "common.save", kind: "primary", "class": "is-primary", type: "submit" },
-        {
-          labelKey: "common.cancel",
-          kind: "ghost",
-          "class": "is-quiet",
-          onClick: function () { if (box) box.close(); }
+    var Model = model();
+    if (!UI || typeof UI.inlineValue !== "function" || !Model) return null;
+    var api;
+    try {
+      api = UI.inlineValue({
+        value: cat.name,
+        type: "text",
+        maxLength: 200,
+        labelKey: "form.name",
+        labelParams: function () { return {}; },
+        onSave: function (value) {
+          var name = value === null || value === undefined ? "" : String(value).replace(/^\s+|\s+$/g, "");
+          /* A category with no name cannot be found again, so an emptied name
+             is the one text this control refuses. */
+          if (!name || name.length > 200) return false;
+          if (name === cat.name) return true;
+          pendingFocus = focusTag("cat", cat.id);
+          if (!Model.updateCategory(cat.id, { name: name })) {
+            pendingFocus = null;
+            return false;
+          }
+          return true;
         }
-      ],
-      onSubmit: function (values, api) {
-        var name = String(values.name || "").replace(/^\s+|\s+$/g, "");
-        if (!name) {
-          fail(api, { name: "err.required" });
-          return;
-        }
-        if (name.length > 200) {
-          fail(api, { name: "err.noteTooLong" });
-          return;
-        }
-        if (!Model.updateCategory(cat.id, { name: name })) {
-          fail(api, { name: "err.unknown" });
-          return;
-        }
-        if (box) box.close();
-      }
-    });
-    addClass(dom.qs(".form__fields", form.element), "form__row");
-
-    box = UI.dialog({ titleKey: "common.edit", body: form.element });
-    box.open();
+      });
+    } catch (error) {
+      log(error);
+      return null;
+    }
+    stamp(dom.qs(".inlinevalue__btn", api.element), focusTag("cat", cat.id));
+    return leftAlign(api);
   }
 
   /* Flipping the fixed mark moves money in and out of the daily-allowance pool,
@@ -1104,7 +1344,11 @@
   function toggleFixed(cat) {
     var Model = model();
     if (!Model) return;
-    if (!Model.updateCategory(cat.id, { fixed: !cat.fixed })) return;
+    pendingFocus = focusTag("fixed", cat.id);
+    if (!Model.updateCategory(cat.id, { fixed: !cat.fixed })) {
+      pendingFocus = null;
+      return;
+    }
     strip(key("limits.category.fixedHint", "ledger.form.fixedHint"), null, function () {
       Model.updateCategory(cat.id, { fixed: !!cat.fixed });
     });
@@ -1113,50 +1357,79 @@
   function toggleArchived(cat) {
     var Model = model();
     if (!Model) return;
-    Model.updateCategory(cat.id, { archived: !cat.archived });
+    pendingFocus = focusTag("archive", cat.id);
+    if (!Model.updateCategory(cat.id, { archived: !cat.archived })) pendingFocus = null;
   }
 
-  /* Deleting a category never deletes its entries: Model moves them to the
-     catch-all. The count is on the confirmation, because deleting blind is the
-     one thing this screen must not allow. */
+  /* Deleting a category never deletes its entries: Moon.Model moves them to the
+     catch-all and answers with the count. That makes it an undoable act, not a
+     destructive one — so it asks nothing and leaves an eight-second band
+     instead. The snapshot below is what makes the undo real: a new category
+     under the old name, every entry and rule pointed back at it with the
+     fixed mark it had, and the limit put back on top. */
   function deleteCategory(cat, host) {
     var Model = model();
-    var UI = Moon.UI;
-    if (!Model || !UI || typeof UI.confirm !== "function") return;
+    if (!Model || typeof Model.removeCategory !== "function") return;
 
-    var moving = read("entries", { categoryId: cat.id }, []).length;
+    var snapshot = {
+      name: cat.name,
+      kind: cat.kind,
+      fixed: !!cat.fixed,
+      archived: !!cat.archived,
+      limit: read("limitFor", cat.id, null),
+      entries: read("entries", { categoryId: cat.id }, []).map(function (entry) {
+        return { id: entry.id, fixed: entry.fixed };
+      }),
+      rules: bucket("recurring").filter(function (rule) {
+        return rule && rule.categoryId === cat.id;
+      }).map(function (rule) {
+        return { id: rule.id, fixed: rule.fixed };
+      })
+    };
 
-    UI.confirm({
-      titleKey: "common.delete",
-      bodyKey: "ledger.count",
-      params: { count: moving },
-      confirmKey: "common.delete",
-      cancelKey: "common.cancel",
-      danger: true
-    }).then(guard(function (yes) {
-      if (!yes) return;
-      var done = Model.removeCategory(cat.id);
-      /* Model refuses to delete the catch-all itself — it is where the entries
-         of every other deleted category land. */
-      if (!done || !done.ok) {
-        var band = notice("warn", "err.badCategory");
-        if (band && host) host.insertBefore(band, host.firstChild);
-      }
-    }));
+    var done = Model.removeCategory(cat.id);
+    /* Model refuses to delete the catch-all itself — it is where the entries
+       of every other deleted category land. */
+    if (!done || !done.ok) {
+      var band = notice("warn", "err.badCategory");
+      if (band && host) host.insertBefore(band, host.firstChild);
+      return;
+    }
+
+    strip(key("limits.category.removed", "ledger.count"), {
+      name: snapshot.name,
+      count: done.movedEntries || 0
+    }, function () {
+      var revived = Model.addCategory({
+        name: snapshot.name,
+        kind: snapshot.kind,
+        fixed: snapshot.fixed,
+        archived: snapshot.archived
+      });
+      if (!revived) return;
+      snapshot.entries.forEach(function (entry) {
+        Model.updateEntry(entry.id, { categoryId: revived, fixed: entry.fixed });
+      });
+      snapshot.rules.forEach(function (rule) {
+        Model.updateRecurring(rule.id, { categoryId: revived, fixed: rule.fixed });
+      });
+      if (snapshot.limit) Model.setLimit(revived, snapshot.limit);
+    });
   }
 
-  function th(text) {
+  function headCell(text) {
     return dom.el("th", { scope: "col", "class": "sm", text: text });
   }
 
   function categoryRow(cat, host) {
     var row = dom.el("tr");
-    row.appendChild(dom.el("th", {
-      scope: "row",
-      "class": cat.archived ? "dim" : "",
-      title: cat.name,
-      text: cat.name
-    }));
+
+    var nameHead = dom.el("th", { scope: "row", "class": cat.archived ? "dim" : "" });
+    var iv = nameCell(cat);
+    if (iv) nameHead.appendChild(iv.element);
+    else nameHead.appendChild(dom.el("span", { title: cat.name, text: cat.name }));
+    row.appendChild(nameHead);
+
     row.appendChild(dom.el("td", {
       "class": "sm dim",
       text: t(cat.kind === "income" ? "common.income" : "common.expense")
@@ -1171,22 +1444,23 @@
         toggleFixed(cat);
       });
       toggle.setAttribute("aria-pressed", cat.fixed ? "true" : "false");
+      stamp(toggle, focusTag("fixed", cat.id));
       fixedCell.appendChild(toggle);
     }
     row.appendChild(fixedCell);
 
     var actions = dom.el("td");
-    actions.appendChild(btn("common.edit", "quiet", function () {
-      renameCategory(cat);
-    }));
 
     /* Archiving needs two labels the catalogue does not carry. Rather than
        hard-coding a word, the control appears the moment the keys exist. */
     var archiveKey = cat.archived ? "limits.category.unarchive" : "limits.category.archive";
     if (has(archiveKey)) {
-      actions.appendChild(btn(archiveKey, "quiet", function () {
+      var archive = btn(archiveKey, "quiet", function () {
         toggleArchived(cat);
-      }));
+      });
+      archive.setAttribute("aria-pressed", cat.archived ? "true" : "false");
+      stamp(archive, focusTag("archive", cat.id));
+      actions.appendChild(archive);
     }
 
     actions.appendChild(btn("common.delete", "quiet", function () {
@@ -1200,10 +1474,10 @@
   function categoryTable(cats, host) {
     var table = dom.el("table", { "class": "table" });
     table.appendChild(dom.el("thead", null, dom.el("tr", null, [
-      th(t("form.name")),
-      th(t("form.kind")),
-      th(t("common.fixed")),
-      th(t("a11y.rowActions"))
+      headCell(t("form.name")),
+      headCell(t("form.kind")),
+      headCell(t("common.fixed")),
+      headCell(t("a11y.rowActions"))
     ])));
 
     var body = dom.el("tbody");
@@ -1214,56 +1488,70 @@
     return dom.el("div", { "class": "preview" }, table);
   }
 
-  function addCategoryForm() {
-    var Model = model();
+  /* One line, always open, Enter writes. The kind and the fixed mark are kept
+     between writes — adding six expense categories in a row should be six
+     words and six Enters. */
+  function categoryQuickRow() {
     var UI = Moon.UI;
-    if (!Model || !UI || typeof UI.form !== "function") return null;
+    var Model = model();
+    if (!UI || typeof UI.quickRow !== "function" || !Model) return null;
 
-    var form = UI.form({
-      fields: [
-        { type: "text", name: "name", labelKey: "form.name", required: true, maxLength: 200 },
-        {
-          type: "select",
-          name: "kind",
-          labelKey: "form.kind",
-          value: "expense",
-          options: [
-            { value: "expense", labelKey: "common.expense" },
-            { value: "income", labelKey: "common.income" }
-          ]
-        },
-        {
-          type: "switch",
-          name: "fixed",
-          labelKey: "form.fixed",
-          hintKey: key("limits.category.fixedHint", "ledger.form.fixedHint")
+    var api;
+    try {
+      api = UI.quickRow({
+        id: "limits-category-add",
+        memoryKey: "limits.category.quick",
+        labels: "visible",
+        submitLabelKey: "common.add",
+        moreLabelKey: "common.more",
+        keepOnSubmit: ["kind", "fixed"],
+        fields: [
+          { type: "text", name: "name", labelKey: "form.name", required: true, maxLength: 200 },
+          {
+            type: "select",
+            name: "kind",
+            labelKey: "form.kind",
+            value: addMemory.kind,
+            options: [
+              { value: "expense", labelKey: "common.expense" },
+              { value: "income", labelKey: "common.income" }
+            ]
+          }
+        ],
+        moreFields: [
+          {
+            type: "switch",
+            name: "fixed",
+            labelKey: "form.fixed",
+            value: !!addMemory.fixed,
+            hintKey: key("limits.category.fixedHint", "ledger.form.fixedHint")
+          }
+        ],
+        onSubmit: function (values) {
+          var name = String(values.name || "").replace(/^\s+|\s+$/g, "");
+          if (!name) return { ok: false, errors: { name: "err.required" } };
+          if (name.length > 200) return { ok: false, errors: { name: "err.noteTooLong" } };
+
+          var kind = values.kind === "income" ? "income" : "expense";
+          var fixed = !!values.fixed;
+          var id = Model.addCategory({ name: name, kind: kind, fixed: fixed });
+          if (!id) return { ok: false, errors: { name: "err.unknown" } };
+
+          /* The write redraws this whole section, so what the row was asked to
+             keep has to outlive the row itself. */
+          addMemory = { kind: kind, fixed: fixed };
+          pendingFocus = focusTag("newcat", "");
+          return { ok: true };
         }
-      ],
-      actions: [{ labelKey: "common.add", kind: "primary", "class": "is-primary", type: "submit" }],
-      onSubmit: function (values, api) {
-        var name = String(values.name || "").replace(/^\s+|\s+$/g, "");
-        if (!name) {
-          fail(api, { name: "err.required" });
-          return;
-        }
-        if (name.length > 200) {
-          fail(api, { name: "err.noteTooLong" });
-          return;
-        }
-        var id = Model.addCategory({
-          name: name,
-          kind: values.kind === "income" ? "income" : "expense",
-          fixed: !!values.fixed
-        });
-        if (!id) {
-          fail(api, { name: "err.unknown" });
-          return;
-        }
-        /* The re-render replaces this form; nothing to reset by hand. */
-      }
-    });
-    addClass(dom.qs(".form__fields", form.element), "form__row");
-    return form.element;
+      });
+    } catch (error) {
+      log(error);
+      return null;
+    }
+
+    var first = api.fields ? api.fields.name : null;
+    if (first && first.control) stamp(first.control, focusTag("newcat", ""));
+    return api.element;
   }
 
   function categorySection() {
@@ -1276,7 +1564,7 @@
       /* Says out loud what the fixed mark does to the daily allowance. */
       body.appendChild(small(tk("limits.category.fixedHint", "ledger.form.fixedHint")));
     }
-    var adder = addCategoryForm();
+    var adder = categoryQuickRow();
     if (adder) body.appendChild(adder);
 
     return UI.section({
@@ -1291,7 +1579,6 @@
   function render(root) {
     if (!root || !dom) return;
     lastRoot = root;
-    toggleNode = null;
     dom.clear(root);
     if (!Moon.UI || !model()) return;
 
@@ -1302,19 +1589,11 @@
     root.appendChild(yearSection(ctx));
     root.appendChild(categorySection());
 
-    /* Opening, closing and applying all replace the control that was pressed.
-       Putting the focus back on it is the whole of the disclosure's keyboard
-       contract: Tab from there walks straight into the block. */
-    if (refocusToggle) {
-      refocusToggle = false;
-      if (toggleNode && typeof toggleNode.focus === "function") {
-        try {
-          toggleNode.focus();
-        } catch (error) {
-          log(error);
-        }
-      }
-    }
+    /* Every inline write replaced the control that made it. This is the whole
+       of the keyboard contract on this screen: type a limit, press Enter, and
+       the caret is back on the same number — drag a bar, let go, and the grip
+       is still under the finger that will nudge it with an arrow key next. */
+    restoreFocus(root);
   }
 
   var view = {
@@ -1333,15 +1612,16 @@
          is deliberately left standing — its handler calls Moon.Model, so it
          keeps working after the reader has walked away.
          What does have to go: the cached root (redrawing into a root the router
-         has handed to another view would paint this section over it) and the
-         suggestion block, which is a transient answer to "suggest me limits"
-         and should not be waiting when the reader comes back. */
+         has handed to another view would paint this section over it), the
+         suggestion block, which is a transient answer to "suggest me limits",
+         and the selection lock, which a reader who navigated away mid-drag
+         would otherwise carry into the next section. */
       lastRoot = null;
-      toggleNode = null;
       suggestOpen = false;
       suggestPicks = null;
       appliedCount = 0;
-      refocusToggle = false;
+      pendingFocus = null;
+      if (dragLock) setDragLock(false);
     }
   };
 

@@ -26,6 +26,9 @@
   --act-col: 84px;          /* row actions: space is reserved even when unseen */
   --meter-name: 136px;
   --meter-read: 176px;
+  --qr-date: 10.5rem;       /* quick row: a date field, native picker and all */
+  --qr-cat: 16rem;          /* quick row: how wide a category select may grow */
+  --iv-ch: 7;               /* inlineValue: digit width, ui.js overwrites it  */
   --scrim: rgb(0 0 0 / 0.55);   /* dialog backdrop — the only translucency    */
   --stagger: 60ms;          /* dark-adaptation step delay                     */
 }
@@ -1058,6 +1061,204 @@ input[type="radio"] {
   border-color: var(--rule-strong);
 }
 
+/* -------------------------------------------------------------- quick row
+   The row that replaced the entry dialog. One line of fields between two 1px
+   rules — no box, no plate, no shadow — read on the ledger's own measures: the
+   amount field is exactly --amount-col wide and right aligned, so the digits a
+   reader types sit in the same column the saved rows print them in. */
+.quickrow {
+  border-top: 1px solid var(--rule);
+  border-bottom: 1px solid var(--rule);
+  padding: var(--s1) 0;
+  /* Where a keyboard-driven scrollIntoView is allowed to stop: clear of the
+     sticky filter bar above and of the fixed rail below. */
+  scroll-margin-top: calc(var(--s5) + 44px);
+  scroll-margin-bottom: calc(var(--rail-h) + var(--s3));
+}
+
+/* Hangs from the same left line the day-grouped rows hang from, so the entry
+   line and the lines already written read as one ledger. */
+.quickrow--ledger {
+  padding-left: var(--day-col);
+}
+
+.quickrow__fields {
+  display: flex;
+  flex-wrap: wrap;
+  /* Stretch, not baseline: a date box with a native picker is a few pixels
+     taller than a text box, and on one line that reads as a ragged row. */
+  align-items: stretch;
+  gap: var(--s1);
+}
+
+/* A field in the row gives up the two lines its label and readout would cost.
+   They are clipped, not removed: the <label for> stays bound to the control
+   and a screen reader still reads both, while the pointer gets the same words
+   as the control's title. */
+.quickrow .field {
+  min-width: 0;
+}
+
+/* With the label clipped, the control is the only thing left in the field's
+   grid, so the 4px gap under it would be dead space on every row. */
+.quickrow:not(.quickrow--labeled) .field {
+  gap: 0;
+}
+
+.quickrow:not(.quickrow--labeled) .field__label,
+.quickrow .field__hint,
+.quickrow .field__read,
+.quickrow .field__error {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* Column measures taken from the ledger, keyed off the type field() already
+   stamps on every wrapper — so the row needs no per-field class from a view. */
+.quickrow .field--date {
+  flex: 0 0 auto;
+  width: var(--qr-date);
+}
+
+.quickrow .field--money {
+  flex: 0 0 var(--amount-col);
+}
+
+/* The two elastic columns are given a SMALL basis on purpose. A wrapping flex
+   line breaks on the hypothetical basis and only then shrinks what is on it,
+   so a generous basis pushes the save button onto a second line long before
+   the row is actually full. They grow into the slack instead. */
+.quickrow .field--select {
+  flex: 1 1 8rem;
+  max-width: var(--qr-cat);
+}
+
+.quickrow .field--text,
+.quickrow .field--search {
+  flex: 4 1 8rem;
+}
+
+.quickrow .field--switch,
+.quickrow .field--number {
+  flex: 0 0 auto;
+}
+
+/* The amount reads in the ledger's own column: right aligned, tabular. */
+.quickrow .field--money .field__input {
+  text-align: right;
+}
+
+.quickrow__submit,
+.quickrow__more {
+  flex: 0 0 auto;
+}
+
+/* The folded sheet is absent from the DOM, so this rule only ever dresses an
+   open one. A second line under the row, divided by one more hairline. */
+.quickrow__extra {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: stretch;
+  gap: var(--s1);
+  margin-top: var(--s1);
+  padding-top: var(--s1);
+  border-top: 1px solid var(--rule);
+}
+
+/* Errors get a lane of their own under the row rather than a sentence stuffed
+   into a 104px column. Nothing floats, nothing covers anything: the band is
+   the next line down, in the overrun ink, under one rule in the same ink. */
+.quickrow__errors {
+  margin-top: var(--s1);
+  padding-top: var(--s1);
+  border-top: 1px solid var(--over);
+  font-size: var(--t-sm);
+  color: var(--over);
+}
+
+.quickrow__error + .quickrow__error {
+  margin-top: 4px;
+}
+
+/* ------------------------------------------------------------ inlineValue
+   Closed it is a <button>, open it is an <input>, and both sit in the SAME
+   grid cell on an explicit track sized from --iv-ch. The track is a fixed
+   length, so the column measures the same closed, open and invalid: a limits
+   list cannot twitch when one row goes into edit. */
+/* The track is measured in `ch`, so the wrapper has to be set in the SAME type
+   as the two halves it holds — otherwise the column is sized with the 13px
+   digit of the row around it while the number inside is printed at 15px, and
+   the text quietly overflows the box that was supposed to hold it. One ch of
+   slack covers the glyphs that are not digits: the separator and the symbol. */
+.inlinevalue {
+  display: inline-grid;
+  grid-template-columns: calc((var(--iv-ch) + 1) * 1ch + 2 * var(--s1) + 2px);
+  align-items: center;
+  font-size: var(--t-amount);
+}
+
+.inlinevalue__btn,
+.inlinevalue__input {
+  grid-area: 1 / 1;
+  width: 100%;
+  min-height: 36px;
+  padding: 4px var(--s1);
+  background: none;
+  color: var(--ink);
+  font: inherit;
+  font-size: var(--t-amount);
+  font-weight: 500;
+  line-height: 1.2;
+  text-align: right;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+}
+
+/* Closed, the reading looks like a reading: one hairline under it is the only
+   hint that it is also a control, and the full frame arrives on hover. */
+.inlinevalue__btn {
+  cursor: pointer;
+  border-bottom-color: var(--rule);
+}
+
+.inlinevalue__btn:hover {
+  border-color: var(--ink-dim);
+}
+
+.inlinevalue__input {
+  background: var(--bg);
+  border-color: var(--ink-dim);
+}
+
+.inlinevalue.is-invalid .inlinevalue__btn,
+.inlinevalue.is-invalid .inlinevalue__input {
+  border-color: var(--over);
+}
+
+/* The sentence is longer than the number it belongs to, so it is allowed to
+   overflow the track to the LEFT instead of widening it. The track stays
+   fixed — no jump — and the spilled line breaks the tidy right edge of the
+   column on purpose, the same way an overrun does on a meter (G1). */
+.inlinevalue__error {
+  grid-area: 2 / 1;
+  display: block;
+  justify-self: end;
+  width: max-content;
+  max-width: 30ch;
+  margin-top: 2px;
+  font-size: var(--t-sm);
+  line-height: 1.35;
+  text-align: right;
+  color: var(--over);
+}
+
 /* ---------------------------------------------------- notices, undo, strip */
 .notice {
   display: flex;
@@ -1471,6 +1672,10 @@ input[type="radio"] {
   .btn,
   .picker > button,
   .period > button,
+  /* The header's currency and language selects wear the button frame, so they
+     were in that list visually and missing from this one: 36px tall next to
+     44px neighbours, on the one surface where the target matters. */
+  .picker__select,
   .dialog__close,
   .rail__item,
   .rail__more,
@@ -1488,6 +1693,75 @@ input[type="radio"] {
     min-height: 44px;
   }
 
+  /* §8a — the first of the two measured drifts. iOS Safari zooms the whole
+     page the moment a control whose font-size is under 16px takes focus, and
+     the reader does not read that as a zoom: they read it as the screen
+     sliding away under the keyboard. So 16px is a FLOOR here for everything
+     that can take a caret or open a picker. A control that has to look small
+     gets there through height and padding, never through type size.
+     `:root` is in the selector purely for weight: .picker__select asks for
+     13px and the quick row's amount for 15px, and one more element selector
+     behind a pseudo-class beats a single class without reaching for
+     !important, which this file uses nowhere but [hidden]. */
+  :root input,
+  :root select,
+  :root textarea,
+  :root [contenteditable="true"] {
+    /* The plain value first: an engine without max() must land on 16px, not
+       fall back to the 13px it was about to zoom on. */
+    font-size: 16px;
+    font-size: max(1rem, 16px);
+  }
+
+  /* The quick row's own measures: four fields squeezed onto one phone line
+     read as none, so the date and the amount share the first line, the
+     category and the note take a full line each, and the save button gets a
+     line with the "more" toggle — both over 44px, both reachable by thumb. */
+  .quickrow .field--date {
+    flex: 1 1 8rem;
+    width: auto;
+  }
+
+  .quickrow .field--money {
+    flex: 1 1 var(--amount-col);
+  }
+
+  .quickrow .field--select,
+  .quickrow .field--text,
+  .quickrow .field--search {
+    flex: 1 1 100%;
+    max-width: none;
+  }
+
+  .quickrow__submit {
+    flex: 1 1 60%;
+  }
+
+  .quickrow__more {
+    flex: 1 1 28%;
+  }
+
+  .inlinevalue__btn,
+  .inlinevalue__input {
+    min-height: 44px;
+  }
+
+  /* The 16px floor reaches the input through the rule above; the wrapper that
+     measures the track and the closed button have to follow it or the three
+     stop agreeing on how wide a digit is. */
+  .inlinevalue,
+  .inlinevalue__btn {
+    font-size: 16px;
+    font-size: max(1rem, 16px);
+  }
+
+  /* The sticky filter bar and the entry row must never be sticky at the same
+     time: a bar stuck to the top edge lands exactly where the row being typed
+     into is. The quick row is sticky nowhere; here the bar gives it up too. */
+  .filters {
+    position: static;
+  }
+
   .rail {
     position: fixed;
     z-index: 40;
@@ -1497,10 +1771,28 @@ input[type="radio"] {
     display: grid;
     grid-template-columns: repeat(4, 1fr);
     align-items: stretch;
+    /* dvh, with vh behind it for an engine that does not know the unit. vh is
+       measured against the tallest viewport, so it grows and shrinks with the
+       browser chrome and the layout jumps with it. */
     max-height: 70vh;
+    max-height: 70dvh;
     overflow-y: auto;
     background: var(--bg);
     border-top: 1px solid var(--rule);
+  }
+
+  /* §8b — the second measured drift. The rail is position:fixed, so the
+     virtual keyboard shortens the visible area while the rail keeps measuring
+     the old one and comes to rest on top of the field being typed into.
+     ui.js puts .is-typing on <html> for exactly as long as a form control
+     holds focus (one document-level focusin/focusout pair, so no view has to
+     know), and the rail folds away for that time.
+     Navigation is not lost: nobody navigates mid-word, and the rail is back
+     the moment focus leaves the field. body keeps its padding-bottom while
+     folded on purpose — reclaiming it would scroll the page under the
+     reader's finger, which is the very drift this rule exists to stop. */
+  .is-typing .rail {
+    display: none;
   }
 
   .rail__item {
@@ -1795,8 +2087,15 @@ input[type="radio"] {
   .filters,
   .ledger-row__actions,
   .form__actions,
-  .btn {
+  .btn,
+  .quickrow,
+  .inlinevalue__input {
     display: none;
+  }
+
+  /* The inline editor prints as the number it holds, with no frame around it. */
+  .inlinevalue__btn {
+    border-color: transparent;
   }
 
   .shell {

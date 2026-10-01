@@ -26,6 +26,7 @@
 
   var dom = Moon.dom;
   var util = Moon.util;
+  var doc = global.document;
 
   /* The hero trace: 620x48 on a desk, 320x40 on a phone (E4, design §graphs). */
   var TRAIL = { w: 620, h: 48 };
@@ -47,6 +48,17 @@
   var CHART_MIN_DAYS = 7;
 
   var dragTimer = null;
+
+  /* Progressive disclosure of the strip (sadeleştirme §6). The strip carries
+     three things at every width — the reading, the trace, one status sentence —
+     and parks the three supporting sentences behind a quiet key.
+
+     The flag is module level on purpose. The router redraws this view on every
+     state:change and lang:change, so a flag living on the node would fold the
+     sheet back under the reader each time an entry was saved. It is just as
+     deliberately NOT written to the store: the sheet is remembered for this
+     session, and a view does not write settings. */
+  var detailsOpen = false;
 
   /* ---------------------------------------------------------------- plumbing */
 
@@ -507,6 +519,53 @@
     }
   }
 
+  /* The folded lines stay DIRECT children of .hero instead of moving into a
+     wrapper. The strip's vertical rhythm comes from one rule, `.hero > * + *`,
+     and p margins are zeroed in moon.css — a wrapper would print the three
+     sentences as one solid block. `[hidden]` is display:none !important here,
+     so a folded line costs no box and no margin, which is the whole point of
+     the fold; and aria-controls takes the id list ARIA allows for exactly
+     this shape.
+
+     The key rides at the end of the status sentence rather than taking a line
+     of its own. A key on its own row would cost the strip the button's full
+     height plus the rhythm gap (52px on a phone) and hand back 81px, which is
+     most of the fold's saving spent on the handle; sharing the sentence's line
+     box costs 25px instead. A button is phrasing content, so the paragraph
+     stays valid; a text node keeps the words apart for a reader whose screen
+     reader runs inline siblings together. */
+  function disclose(lines, bodyLine) {
+    var ids = [];
+    lines.forEach(function (node, index) {
+      var id = "panel-hero-more-" + (index + 1);
+      node.id = id;
+      node.hidden = !detailsOpen;
+      ids.push(id);
+    });
+
+    var toggle = dom.el("button", {
+      "class": "btn is-quiet",
+      type: "button",
+      "aria-expanded": detailsOpen ? "true" : "false",
+      "aria-controls": ids.join(" ")
+    }, t("common.details"));
+
+    toggle.addEventListener("click", function () {
+      detailsOpen = !detailsOpen;
+      toggle.setAttribute("aria-expanded", detailsOpen ? "true" : "false");
+      lines.forEach(function (node) {
+        node.hidden = !detailsOpen;
+      });
+    }, false);
+
+    if (bodyLine) {
+      if (doc && doc.createTextNode) bodyLine.appendChild(doc.createTextNode(" "));
+      bodyLine.appendChild(toggle);
+      return null;
+    }
+    return dom.el("p", { "class": "hero__line" }, toggle);
+  }
+
   function heroStrip(periodKey, allowance, summary, progress) {
     var reading = heroReading(periodKey, allowance, summary);
     var kids = [];
@@ -519,13 +578,22 @@
       kids.push(node);
     });
 
-    if (reading.body) kids.push(line(reading.body));
+    /* Always on screen (§6): the reading, the trace, and this one sentence —
+       whichever of the five states the period is in. */
+    var bodyLine = reading.body ? line(reading.body) : null;
+    if (bodyLine) kids.push(bodyLine);
     if (reading.action) kids.push(dom.el("p", { "class": "hero__line" }, reading.action));
+
+    /* One click away (§6): today's spend, the pace comparison, the
+       fixed-payment summary. Every one of them is extra information about a
+       measurement already on screen, never a warning and never an overrun —
+       those have their own bands below and are not folded anywhere. */
+    var more = [];
 
     /* Today's reading only exists while the period holds today and there is an
        allowance to have a remainder of. */
     if (allowance.perDayLeftToday !== null && allowance.perDayLeftToday !== undefined) {
-      kids.push(line(sentence("panel.spentToday", {
+      more.push(line(sentence("panel.spentToday", {
         spent: money(allowance.spentToday || 0),
         left: money(allowance.perDayLeftToday)
       })));
@@ -534,7 +602,7 @@
     /* G7: two ratios next to each other. One number lies about pace; the
        difference between these two cannot. */
     if (allowance.state !== "noLimits") {
-      kids.push(line(sentence("panel.paceLine", {
+      more.push(line(sentence("panel.paceLine", {
         periodPct: percent(allowance.periodRatio),
         spentPct: percent(allowance.spentRatio)
       }), true));
@@ -543,10 +611,21 @@
     /* A3: fixed payments are reserved, not part of the daily pool, so they are
          reported on their own line instead of distorting the hero number. */
     if (allowance.fixedCount) {
-      kids.push(line(sentence("panel.fixedReserved", {
+      more.push(line(sentence("panel.fixedReserved", {
         count: allowance.fixedCount,
         amount: money(allowance.fixedReserved || 0)
       }), true));
+    }
+
+    /* line() answers null for an empty sentence, and a key with no text must
+       not earn an id or a slot behind the fold. */
+    var folded = more.filter(function (node) { return !!node; });
+    if (folded.length) {
+      var own = disclose(folded, bodyLine);
+      if (own) kids.push(own);
+      folded.forEach(function (node) {
+        kids.push(node);
+      });
     }
 
     /* The strip stays a drop target whatever it says (G11), but the sentence
