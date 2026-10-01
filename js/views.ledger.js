@@ -1737,9 +1737,81 @@
 
   Moon.Views = Moon.Views || {};
 
+  /* The panel asks for this so the first screen is also where a reader writes.
+     It is the same row the ledger carries, built from the same field specs and
+     the same submit path — not a second entry form that could drift from this
+     one. The caller gets its own memory key so the two rows do not share an
+     open "more" sheet, and a callback so the host can redraw once a row lands. */
+  function quickEntryFor(options) {
+    var opts = options || {};
+    var UI = Moon.UI;
+    if (!UI || typeof UI.quickRow !== "function") return null;
+
+    var touch = { direction: false, fixed: false };
+    var api = null;
+
+    var seed = (function () {
+      var base = {
+        date: lastUsed.date || today() || "",
+        amount: "",
+        categoryId: knownCategory(lastUsed.categoryId) ? lastUsed.categoryId : firstCategoryId(),
+        note: "",
+        direction: null,
+        fixed: null
+      };
+      base.direction = directionForCategory(base.categoryId);
+      base.fixed = fixedForCategory(base.categoryId);
+      return base;
+    })();
+
+    var specOpts = {
+      touch: touch,
+      onCategory: function (value) {
+        if (!touch.direction) writeSelect(api, "direction", directionForCategory(value));
+        if (!touch.fixed) writeSwitch(api, "fixed", fixedForCategory(value));
+      }
+    };
+
+    try {
+      api = UI.quickRow({
+        "class": "quickrow--ledger",
+        memoryKey: opts.memoryKey || "panel.quick",
+        fields: entryFieldSpecs(seed, specOpts),
+        moreFields: moreFieldSpecs(seed, specOpts),
+        moreLabelKey: "common.more",
+        submitLabelKey: "ledger.form.submit",
+        keepOnSubmit: ["date", "categoryId"],
+        onSubmit: function (values) {
+          var Model = Moon.Model;
+          if (!Model || typeof Model.addEntry !== "function") return { ok: false, errors: {} };
+
+          var read = buildDraft(values, touch, null);
+          if (Object.keys(read.errors).length) return { ok: false, errors: read.errors };
+
+          var id = Model.addEntry(read.draft);
+          if (!id) return { ok: false, errors: { amount: "err.unknown" } };
+
+          lastUsed.date = read.draft.date;
+          lastUsed.categoryId = read.draft.categoryId;
+          touch.direction = false;
+          touch.fixed = false;
+          if (typeof opts.onSaved === "function") opts.onSaved(id);
+          return { ok: true };
+        }
+      });
+    } catch (error) {
+      /* A missing part should cost the panel its entry row, not its render. */
+      if (global.console && global.console.error) global.console.error("quickEntry", error);
+      return null;
+    }
+
+    return api;
+  }
+
   Moon.Views.ledger = {
     id: "ledger",
     titleKey: "nav.ledger",
+    quickEntry: quickEntryFor,
 
     render: function (root) {
       host = root;

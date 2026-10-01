@@ -758,9 +758,19 @@
         actions: [{ labelKey: "panel.state.noLimits.action", href: "#limitler" }]
       }));
     } else {
-      rows.slice(0, METER_LIMIT).forEach(function (row) {
-        body.push(row.pct === null ? plainRow(row) : meterRow(row));
-      });
+      /* The Limits section's own rows, with the figure you can type into and the
+         cap you can drag. Seeing what went and pulling the limit to meet it is
+         one gesture, on one screen, which is the order the work actually
+         happens in. If that section cannot be reached the panel still draws its
+         read-only scales rather than nothing. */
+      var live = scaleRows(METER_LIMIT);
+      if (live && live.element) {
+        body.push(live.element);
+      } else {
+        rows.slice(0, METER_LIMIT).forEach(function (row) {
+          body.push(row.pct === null ? plainRow(row) : meterRow(row));
+        });
+      }
 
       var extra = rows.length - METER_LIMIT;
       /* The whole list lives in its own section; this is the way there. */
@@ -998,6 +1008,39 @@
     periodRatio: 0
   };
 
+  /* Set when a row has just been written: the next render hands the caret back
+     to the amount field, so a run of entries never needs the mouse. */
+  var focusAmountNext = false;
+
+  /* Both of these come from the sections that own them. The panel composes;
+     it does not keep a second copy of how an entry is written or how a limit is
+     pulled, because a second copy is a thing that drifts. */
+  function entryRow(root) {
+    var ledger = Moon.Views && Moon.Views.ledger;
+    if (!ledger || typeof ledger.quickEntry !== "function") return null;
+
+    var api = safe(function () {
+      return ledger.quickEntry({
+        memoryKey: "panel.quick",
+        onSaved: function () {
+          /* Writing raises state:change and the router answers it on the next
+             tick, so drawing here would only be undone a moment later — and
+             with it the caret. Ask instead: whoever draws next puts the caret
+             back where the following amount goes. */
+          focusAmountNext = true;
+        }
+      });
+    }, null);
+
+    return api && api.element ? api.element : null;
+  }
+
+  function scaleRows(max) {
+    var limits = Moon.Views && Moon.Views.limits;
+    if (!limits || typeof limits.scales !== "function") return null;
+    return safe(function () { return limits.scales({ limit: max }); }, null);
+  }
+
   function render(root) {
     if (!root) return;
     dom.clear(root);
@@ -1020,6 +1063,12 @@
 
     root.appendChild(heroStrip(periodKey, allowance, summary, progress));
 
+    /* Writing something down is the thing done most often, so it belongs on the
+       screen that opens, under the number it changes. The row is the ledger's
+       own — same fields, same submit path — so the two cannot drift apart. */
+    var entry = entryRow(root);
+    if (entry) root.appendChild(entry);
+
     var pending = safe(function () { return Moon.Model.pendingRecurring(periodKey); }, []) || [];
     if (pending.length) root.appendChild(pendingBand(periodKey, pending));
 
@@ -1036,6 +1085,16 @@
     root.appendChild(flowSection(periodKey));
     root.appendChild(cumulativeSection(periodKey));
     applyCssHooks(root);
+    restoreCaret(root);
+  }
+
+  function restoreCaret(root) {
+    if (!focusAmountNext) return;
+    focusAmountNext = false;
+    var field = root.querySelector('.quickrow [name="amount"]');
+    if (!field || typeof field.focus !== "function") return;
+    field.focus();
+    if (typeof field.select === "function") safe(function () { field.select(); }, null);
   }
 
   function destroy() {

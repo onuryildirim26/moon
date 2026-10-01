@@ -1596,10 +1596,27 @@
     restoreFocus(root);
   }
 
+  /* The panel asks for these so a reader can see where the money went and pull a
+     limit to meet it without leaving the first screen. Handing over the real
+     rows rather than a copy keeps one implementation of the scale, the inline
+     figure and the drag: a fix here reaches both places. */
+  function scalesFor(options) {
+    var opts = options || {};
+    var ctx = context();
+    var rows = Array.isArray(ctx.rows) ? ctx.rows : [];
+
+    if (typeof opts.filter === "function") rows = rows.filter(opts.filter);
+    if (opts.limit > 0) rows = rows.slice(0, opts.limit);
+    if (!rows.length) return null;
+
+    return { element: scaleList(rows, ctx), count: rows.length, total: (ctx.rows || []).length };
+  }
+
   var view = {
     /* The hash stays Turkish for URL permanence; the label comes from i18n. */
     id: "limitler",
     titleKey: "nav.limits",
+    scales: scalesFor,
     render: function (root) {
       try {
         render(root);
