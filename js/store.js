@@ -330,6 +330,12 @@
       monthStartDay: 1,
       overflowMark: "pigment",
       sampleOn: false,
+      /* What a foreign currency is worth, as the reader typed it, and what it
+         is worth IN. Empty until somebody keeps an account or a holding in
+         something other than the display currency; see Moon.Money.convert for
+         what a value means. The base rides along because a rate without one is
+         a number with no units. */
+      rates: { base: null, of: {} },
       lastBackup: null,
       changesSinceBackup: 0
     };
@@ -782,6 +788,26 @@
       out.overflowMark = input.overflowMark;
     }
     out.sampleOn = input.sampleOn === true;
+
+    /* A hand-edited or older file may carry anything here. Only a three-letter
+       base and positive finite rates survive; a rate of zero or less is not a
+       rate and would divide the app by nothing. */
+    if (isObject(input.rates)) {
+      var base = input.rates.base;
+      out.rates = {
+        base: typeof base === "string" && /^[A-Za-z]{3}$/.test(base) ? base.toUpperCase() : null,
+        of: Object.create(null)
+      };
+      if (isObject(input.rates.of)) {
+        Object.keys(input.rates.of).forEach(function (code) {
+          if (!/^[A-Za-z]{3}$/.test(code)) return;
+          var value = input.rates.of[code];
+          if (typeof value !== "number" || !isFinite(value) || value <= 0) return;
+          out.rates.of[code.toUpperCase()] = Math.round(value);
+        });
+      }
+    }
+
     out.lastBackup = civil(input.lastBackup);
     if (isInt(input.changesSinceBackup) && input.changesSinceBackup >= 0) {
       out.changesSinceBackup = input.changesSinceBackup;

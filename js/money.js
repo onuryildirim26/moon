@@ -330,6 +330,54 @@
     return SYMBOLS[code] || code;
   }
 
+  /* -------------------------------------------------------------- rates */
+
+  /* Moon never asks the network what a currency is worth, so a rate is a figure
+     the reader typed, and it means one thing only:
+
+         rates.of.USD = how many MINOR units of rates.base one whole USD buys.
+
+     1 USD = 41,50 ₺ with a Turkish base is therefore 4150. The base is stored
+     beside the rates because a rate without one is a number with no units, and
+     a reader who later switches the app to euros must not have their old lira
+     rates quietly reused as if they had always meant euros.
+
+     Returns null, never a guess, when the conversion cannot be made. A missing
+     rate is a thing to say out loud: adding dollars to lira because no rate was
+     found is how a net worth ends up confidently wrong. */
+  function rateOf(rates, code) {
+    if (!rates || !rates.of) return null;
+    var value = rates.of[String(code || "").toUpperCase()];
+    return typeof value === "number" && isFinite(value) && value > 0 ? value : null;
+  }
+
+  function convert(minor, from, to, rates) {
+    var value = toMinor(minor);
+    var a = String(from || "").toUpperCase();
+    var b = String(to || "").toUpperCase();
+    if (!a || !b) return null;
+    if (a === b) return value;
+    if (!rates) return null;
+
+    var base = String(rates.base || "").toUpperCase();
+    if (!base) return null;
+
+    /* Into the base first, then out of it. One hop when either side already is
+       the base, two when neither is — and the rounding happens once at the end
+       of each hop, which is the most a reader-typed rate can honestly carry. */
+    var inBase = value;
+    if (a !== base) {
+      var up = rateOf(rates, a);
+      if (up === null) return null;
+      inBase = Math.round(value * up / MINOR_SCALE);
+    }
+    if (b === base) return inBase;
+
+    var down = rateOf(rates, b);
+    if (down === null) return null;
+    return Math.round(inBase * MINOR_SCALE / down);
+  }
+
   /* ------------------------------------------------------------- quantity */
 
   /* An investment is counted in units rather than in money: half a bitcoin,
@@ -450,6 +498,8 @@
     symbol: symbolFor,
     parseQuantity: parseQuantity,
     formatQuantity: formatQuantity,
+    convert: convert,
+    rateOf: rateOf,
 
     /* Integer sum. Accepts a list, an array, or a mix of both. */
     add: function () {

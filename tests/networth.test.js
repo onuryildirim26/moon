@@ -182,3 +182,67 @@ test("an archived account or holding is out of every total", () => {
 function plainCounts(counts) {
   return { accounts: counts.accounts, investments: counts.investments, debts: counts.debts };
 }
+
+/* Money in two currencies.
+ *
+ * Before this existed, a dollar account and a lira account were added together
+ * as though both were the same integer, because both ARE the same integer once
+ * the currency is dropped. The total that came out was not wrong by a rounding
+ * error, it was wrong by the exchange rate — and nothing on the screen looked
+ * broken, which is the kind of wrong nobody catches. */
+test("a balance in another currency is left out until a rate is typed", () => {
+  const Moon = session();
+
+  Moon.Model.addAccount({ name: "Lira", kind: "bank", opening: 10000000, currency: "TRY" });
+  Moon.Model.addAccount({ name: "Dollars", kind: "savings", opening: 250000, currency: "USD" });
+
+  const before = Moon.Model.netWorth();
+  assert.equal(before.total, 10000000, "only what could be converted is in the total");
+  assert.deepEqual(Array.from(before.unconverted), ["USD"],
+    "and the currency that could not be is named rather than dropped silently");
+  assert.deepEqual(Array.from(Moon.Model.rates().missing), ["USD"]);
+
+  /* 1 USD = 41,50 ₺, as the reader would type it. */
+  Moon.Model.setRate("USD", 4150);
+
+  const after = Moon.Model.netWorth();
+  assert.deepEqual(Array.from(after.unconverted), []);
+  assert.equal(after.total - before.total, Math.round(250000 * 4150 / 100),
+    "the dollars join at exactly the rate that was typed");
+  assert.equal(after.total, 20375000);
+});
+
+test("rates stop applying when the app is set to report in something else", () => {
+  const Moon = session();
+  Moon.Model.addAccount({ name: "Dollars", kind: "savings", opening: 100000, currency: "USD" });
+  Moon.Model.setRate("USD", 4150);
+  assert.equal(Moon.Model.netWorth().total, 4150000);
+
+  /* The rate means "this many minor units of the base". Switch what the app
+     reports in and the stored number no longer describes what it claims to:
+     reusing it would read 1 USD as 41,50 EUR. It is refused, and the dollars go
+     back to being unconverted until a rate in the new base is typed. */
+  Moon.Store.update((draft) => { draft.settings.currency = "EUR"; }, { immediate: true });
+
+  const after = Moon.Model.netWorth();
+  assert.equal(after.currency, "EUR");
+  assert.equal(after.total, 0, "nothing is converted on a rate that meant another base");
+  assert.deepEqual(Array.from(after.unconverted), ["USD"]);
+});
+
+test("a holding priced in another currency follows the same rule", () => {
+  const Moon = session();
+  Moon.Model.addInvestment({
+    name: "A fund", kind: "fund", quantity: 10000, unitCost: 10000,
+    unitPrice: 12000, currency: "USD"
+  });
+
+  assert.deepEqual(Array.from(Moon.Model.investmentTotals().unconverted), ["USD"]);
+  assert.equal(Moon.Model.investmentTotals().value, 0);
+
+  Moon.Model.setRate("USD", 4000);
+  const totals = Moon.Model.investmentTotals();
+  assert.deepEqual(Array.from(totals.unconverted), []);
+  /* One unit at 120,00 USD, at 40,00 ₺ to the dollar. */
+  assert.equal(totals.value, Math.round(12000 * 4000 / 100));
+});

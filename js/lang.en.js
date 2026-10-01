@@ -465,6 +465,11 @@
 
     /* ------------------------------------------------------- networth ---- */
 
+    "networth.rate.why": "{count} currencies have no rate yet, so they are outside the total.",
+    "networth.rate.why.one": "One currency has no rate yet, so it is outside the total.",
+    "networth.rate.why.other": "{count} currencies have no rate yet, so they are outside the total.",
+    "networth.rate.one": "What is 1 {code} worth in {currency}?",
+    "networth.rate.set": "Write the rate",
     "networth.label": "Net worth",
     "networth.assets": "Assets",
     "networth.liabilities": "Liabilities",

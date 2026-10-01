@@ -506,6 +506,49 @@
      onto the card. §2.5 gives that reading one home, and the strip below has a
      badge that can hold the same two marks, so exactly one of them draws them
      and the answer has to travel between the two. */
+  /* The rate question, asked only of someone who has a reason to answer it.
+
+     Moon never asks the network what a currency is worth, so a foreign balance
+     can only join the total once the reader has typed a rate. Until then it is
+     left out and said out loud here, because a net worth that quietly omits a
+     dollar account is wrong in the direction nobody checks. For the reader who
+     keeps everything in one currency -- almost everybody -- this is never
+     drawn at all. */
+  function rateBand(worth) {
+    var missing = worth && worth.unconverted;
+    if (!missing || !missing.length) return null;
+    if (typeof Moon.Model.setRate !== "function") return null;
+
+    var UI = Moon.UI;
+    var want = worth.currency || "TRY";
+    var rows = missing.map(function (code) {
+      var line = dom.el("span", { "class": "networth__rate__label" },
+        t("networth.rate.one", { code: code, currency: want }));
+
+      var cell = null;
+      if (UI && typeof UI.inlineValue === "function") {
+        var api = safe(function () {
+          return UI.inlineValue({
+            value: null,
+            type: "money",
+            currency: want,
+            labelKey: "networth.rate.set",
+            onSave: function (minor) {
+              safe(function () { Moon.Model.setRate(code, minor); });
+              return true;
+            }
+          });
+        }, null);
+        cell = api && api.element ? api.element : null;
+      }
+
+      return dom.el("p", { "class": "networth__rate" }, cell ? [line, cell] : [line]);
+    });
+
+    return dom.el("div", { "class": "networth__rates" },
+      [dom.el("p", { "class": "networth__rate__head", text: t("networth.rate.why", { count: missing.length }) })].concat(rows));
+  }
+
   function netWorthCard(progress) {
     if (typeof Moon.Model.netWorth !== "function") return { element: null, phase: false };
 
@@ -536,6 +579,9 @@
          the day count instead. */
       kids.push(dom.el("p", { "class": "networth__split", text: t("networth.empty") }));
     }
+
+    var gap = rateBand(worth);
+    if (gap) kids.push(gap);
 
     var card = dom.el("div", { "class": "networth" }, kids);
     var chips = accountChips();

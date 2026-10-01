@@ -1164,6 +1164,80 @@
     return /^[A-Za-z]{3}$/.test(preferred) ? preferred.toUpperCase() : "TRY";
   }
 
+  /* The currency every total is reported in: the one the reader chose. */
+  function displayCurrency() {
+    var code = text(settings().currency).trim();
+    return /^[A-Za-z]{3}$/.test(code) ? code.toUpperCase() : "TRY";
+  }
+
+  /* The rates as stored, but only when they still mean something. A rate says
+     "this many minor units of the base", so a reader who switches the app from
+     lira to euros has a set of numbers that no longer describe what they say
+     they describe — those are refused rather than silently reinterpreted. */
+  function liveRates() {
+    var rates = settings().rates;
+    if (!rates || !rates.of) return null;
+    var base = text(rates.base).toUpperCase();
+    if (!/^[A-Z]{3}$/.test(base)) return null;
+    if (base !== displayCurrency()) return null;
+    return rates;
+  }
+
+  /* A figure brought into the display currency, or null when it cannot be.
+     Null is an answer: the caller reports the money it could not convert
+     instead of adding it to a total where it would read as the wrong amount. */
+  function intoDisplay(minor, from) {
+    var want = displayCurrency();
+    var code = currencyOf(from);
+    if (code === want) return int(minor);
+    var Money = Moon.Money;
+    if (!Money || typeof Money.convert !== "function") return null;
+    return Money.convert(int(minor), code, want, liveRates());
+  }
+
+  /* Every currency the reader actually keeps money in, other than the one the
+     app reports in. Empty for almost everybody, which is the point: the rate
+     question is only ever asked of someone who has a reason to answer it. */
+  function foreignCurrencies() {
+    var want = displayCurrency();
+    var seen = [];
+    function note(code) {
+      var upper = currencyOf(code);
+      if (upper !== want && seen.indexOf(upper) === -1) seen.push(upper);
+    }
+    accounts().forEach(function (one) { note(one.currency); });
+    investments().forEach(function (one) { note(one.currency); });
+    return seen;
+  }
+
+  function setRate(code, minorPerUnit) {
+    var upper = String(code || "").toUpperCase();
+    if (!/^[A-Z]{3}$/.test(upper)) return null;
+    var value = int(minorPerUnit);
+    return write("settings:rate", function (draft) {
+      if (!draft.settings.rates || !draft.settings.rates.of) {
+        draft.settings.rates = { base: null, of: {} };
+      }
+      /* The base is stamped from whatever the app reports in at the moment the
+         rate is typed, because that is what the reader meant by it. */
+      draft.settings.rates.base = displayCurrency();
+      if (value > 0) draft.settings.rates.of[upper] = value;
+      else delete draft.settings.rates.of[upper];
+      return upper;
+    });
+  }
+
+  function rates() {
+    var live = liveRates();
+    return {
+      base: live ? live.base : null,
+      of: live ? live.of : {},
+      missing: foreignCurrencies().filter(function (code) {
+        return !live || !(live.of[code] > 0);
+      })
+    };
+  }
+
   function byDateAscending(a, b) {
     var left = text(a && a.date);
     var right = text(b && b.date);
@@ -1257,11 +1331,25 @@
     /* An archived account is one the reader closed and it is off the accounts
        screen, so carrying it here would leave the total above the cards
        disagreeing with the sum of the cards under it. */
+    /* Every balance is brought into the display currency before it is added.
+       Adding dollars to lira because both are integers is how a net worth ends
+       up confidently wrong, and nothing on the screen would have looked
+       broken. What cannot be converted is counted separately and named, so the
+       view can say which currency is missing a rate rather than quietly
+       understating the total. */
+    out.unconverted = [];
     accounts().forEach(function (account) {
       var balance = int(account.opening) + (movements[account.id] || 0);
-      out.total += balance;
       out.count += 1;
       byKind[account.kind] = (byKind[account.kind] || 0) + balance;
+
+      var here = intoDisplay(balance, account.currency);
+      if (here === null) {
+        var code = currencyOf(account.currency);
+        if (out.unconverted.indexOf(code) === -1) out.unconverted.push(code);
+        return;
+      }
+      out.total += here;
     });
     return out;
   }
@@ -1327,20 +1415,33 @@
   function investmentTotals() {
     var byKind = Object.create(null);
     var out = { value: 0, cost: 0, gain: 0, gainRatio: null, byKind: byKind, kinds: [], count: 0 };
+    /* Gold priced in lira and a fund priced in dollars are two different units,
+       so each holding is brought into the display currency before it joins the
+       total. One without a rate is named rather than added -- a portfolio that
+       silently understates itself is worse than one that says what it is
+       missing. */
+    out.unconverted = [];
     investments().forEach(function (record) {
       var reading = investmentValue(record);
-      out.value += reading.value;
-      out.cost += reading.cost;
+      var value = intoDisplay(reading.value, record.currency);
+      var cost = intoDisplay(reading.cost, record.currency);
       out.count += 1;
+      if (value === null || cost === null) {
+        var code = currencyOf(record.currency);
+        if (out.unconverted.indexOf(code) === -1) out.unconverted.push(code);
+        return;
+      }
+      out.value += value;
+      out.cost += cost;
       var group = byKind[record.kind];
       if (!group) {
         group = { kind: record.kind, value: 0, cost: 0, gain: 0, share: null, count: 0 };
         byKind[record.kind] = group;
         out.kinds.push(group);
       }
-      group.value += reading.value;
-      group.cost += reading.cost;
-      group.gain += reading.gain;
+      group.value += value;
+      group.cost += cost;
+      group.gain += value - cost;
       group.count += 1;
     });
     out.gain = out.value - out.cost;
@@ -1430,7 +1531,17 @@
       liabilities: iOwe,
       total: assets - iOwe,
       measured: cash.count > 0 || holdings.count > 0 || debts.openCount > 0,
-      counts: { accounts: cash.count, investments: holdings.count, debts: debts.openCount }
+      counts: { accounts: cash.count, investments: holdings.count, debts: debts.openCount },
+      /* Currencies held but not converted, because no rate for them has been
+         typed. The total above is therefore the total of what COULD be
+         converted, and the view has to say so rather than present it as
+         everything the reader owns. */
+      unconverted: (cash.unconverted || []).concat(
+        (holdings.unconverted || []).filter(function (code) {
+          return (cash.unconverted || []).indexOf(code) === -1;
+        })
+      ),
+      currency: displayCurrency()
     };
   }
 
@@ -2784,6 +2895,9 @@
     investmentSeries: investmentSeries,
 
     netWorth: netWorth,
+    rates: rates,
+    setRate: setRate,
+    foreignCurrencies: foreignCurrencies,
 
     validateEntry: validateEntry,
     validateLimit: validateLimit,

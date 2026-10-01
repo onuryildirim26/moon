@@ -474,6 +474,11 @@
 
     /* ------------------------------------------------------- networth ---- */
 
+    "networth.rate.why": "{count} para birimi için kur girilmemiş, o yüzden toplamın dışında.",
+    "networth.rate.why.one": "Bir para birimi için kur girilmemiş, o yüzden toplamın dışında.",
+    "networth.rate.why.other": "{count} para birimi için kur girilmemiş, o yüzden toplamın dışında.",
+    "networth.rate.one": "1 {code} kaç {currency}?",
+    "networth.rate.set": "Kuru yaz",
     "networth.label": "Toplam varlık",
     "networth.assets": "Varlıklar",
     "networth.liabilities": "Borçlar",

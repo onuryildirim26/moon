@@ -3775,3 +3775,29 @@ input[type="radio"] {
 }
 
 .qa__acc__icon { font-size: 1rem; line-height: 1; }
+
+/* The missing-rate band on the net-worth card. Drawn only for a reader who
+   keeps money in more than one currency, which is why it is allowed to be a
+   little loud: when it is there, the number above it is incomplete. */
+.networth__rates {
+  grid-column: 1 / -1;
+  margin-top: var(--s1);
+  padding-top: var(--s1);
+  border-top: 1px solid var(--rule);
+}
+
+.networth__rate__head {
+  margin: 0 0 6px;
+  font-size: var(--t-sm);
+  color: var(--warn);
+}
+
+.networth__rate {
+  display: flex;
+  align-items: center;
+  gap: var(--s1);
+  flex-wrap: wrap;
+  margin: 0 0 4px;
+  font-size: var(--t-sm);
+  color: var(--ink-dim);
+}
