@@ -407,8 +407,17 @@
   function scoreDelimiter(prefix, delimiter) {
     var probe = tokenize(prefix, delimiter, { maxRecords: SNIFF_RECORDS });
     var counts = [];
+    var unsplit = 0;
     probe.records.forEach(function (record) {
-      if (!isBlankRecord(record)) counts.push(record.length);
+      if (isBlankRecord(record)) return;
+      /* A bank statement opens with several lines of free text — the account
+         holder, the branch, the date range — and none of them contain the
+         delimiter. Counting those one-field lines lets the preamble outvote the
+         real table: seven header lines beat six data rows, the mode comes out 1,
+         and the delimiter is thrown away. Only lines the delimiter actually
+         split get a vote; the rest are remembered to temper the score. */
+      if (record.length > 1) counts.push(record.length);
+      else unsplit += 1;
     });
     if (!counts.length) return null;
 
@@ -429,10 +438,15 @@
     if (modeCount <= 1) return null;
 
     var ratio = modeFreq / counts.length;
+    /* How much of the file this delimiter actually explains. A comma that splits
+       two lines of a semicolon file should not beat the semicolon on consistency
+       alone. */
+    var coverage = counts.length / (counts.length + unsplit);
     return {
       delimiter: delimiter,
-      score: ratio * (total / counts.length),
+      score: ratio * coverage * (total / counts.length),
       ratio: ratio,
+      coverage: coverage,
       columns: modeCount
     };
   }

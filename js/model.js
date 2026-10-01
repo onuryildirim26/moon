@@ -907,6 +907,20 @@
     }, { immediate: true }) || [];
   }
 
+  /* The sample month is cleared by looking for records it planted. A reader who
+     edits one of those rows — their own limit on a sample category, their own
+     contribution to a sample goal — has taken it over, and clearing the sample
+     must not take it back. Changing a record hands it to the reader by stamping
+     an ordinary source on it; Sample.isSampleRecord honours that over the id the
+     record was born with, and ids stay put so nothing that points at them breaks. */
+  function claim(record) {
+    if (!record) return record;
+    if (record.source === "sample" || String(record.id || "").indexOf("_sample_") === 1) {
+      record.source = "manual";
+    }
+    return record;
+  }
+
   var ENTRY_FIELDS = ["date", "amount", "direction", "categoryId", "note", "fixed",
     "source", "confirmed", "recurringId"];
 
@@ -923,6 +937,7 @@
     if (!validateEntry(merged).ok) return null;
     merged.amount = positiveInt(merged.amount);
     merged.note = text(merged.note).slice(0, 200);
+    claim(merged);
 
     return write("entry:update", function (draft) {
       var rows = bucket(draft, "entries");
@@ -1024,6 +1039,7 @@
           });
         }
         if (typeof patch.archived === "boolean") rows[i].archived = patch.archived;
+        claim(rows[i]);
         return id;
       }
       return null;
@@ -1125,6 +1141,7 @@
           return null;
         }
         limits[i].amount = amount;
+        claim(limits[i]);
         return limits[i].id;
       }
       if (amount === null || amount === 0) return null;
@@ -1175,6 +1192,7 @@
     merged.dayOfMonth = util.clamp(int(merged.dayOfMonth), 1, 31);
     merged.name = text(merged.name).trim().slice(0, 200);
     merged.endDate = isDate(merged.endDate) ? merged.endDate : null;
+    claim(merged);
 
     return write("recurring:update", function (draft) {
       var rows = bucket(draft, "recurring");
@@ -1206,6 +1224,7 @@
       for (var i = 0; i < rows.length; i += 1) {
         if (rows[i] && rows[i].id === id) {
           rows[i].active = !rows[i].active;
+          claim(rows[i]);
           return rows[i].active;
         }
       }
@@ -1301,6 +1320,7 @@
         if (Object.prototype.hasOwnProperty.call(patch, "dueDate")) {
           rows[i].dueDate = isDate(patch.dueDate) ? patch.dueDate : null;
         }
+        claim(rows[i]);
         return id;
       }
       return null;
@@ -1331,6 +1351,7 @@
         /* savedAmount stays the stored truth and the contribution list its
            history; both move together so they can never disagree. */
         rows[i].savedAmount = positiveInt(rows[i].savedAmount) + amount;
+        claim(rows[i]);
         return goalId;
       }
       return null;
@@ -1382,6 +1403,7 @@
           rows[i].settled = patch.settled;
           if (!patch.settled) rows[i].settledDate = null;
         }
+        claim(rows[i]);
         return id;
       }
       return null;
@@ -1408,6 +1430,7 @@
         if (rows[i] && rows[i].id === id) {
           rows[i].settled = true;
           rows[i].settledDate = when;
+          claim(rows[i]);
           return id;
         }
       }

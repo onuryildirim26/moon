@@ -177,6 +177,11 @@
   function isSampleRecord(record) {
     if (!record) return false;
     if (record.source === "sample") return true;
+    /* Editing a sample row makes it the reader's own: Model stamps a different
+       source on it. Once that has happened the id it was born with no longer
+       decides, or clearing the sample month would take their own limit and
+       their own savings contribution away with it. */
+    if (record.source) return false;
     return String(record.id || "").indexOf(MARK) === 1;
   }
 

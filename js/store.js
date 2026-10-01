@@ -489,11 +489,11 @@
   /* Turns anything that parsed as JSON into a state object this version can
      work with. Never throws; reports what it had to repair or drop. */
   function normalize(input, lang) {
-    var report = { repaired: 0, dropped: 0 };
+    var report = { repaired: 0, dropped: 0, structural: 0 };
     var out = {};
 
     if (!isObject(input)) {
-      return { state: defaultState(lang), report: { repaired: 0, dropped: 0 }, alien: true };
+      return { state: defaultState(lang), report: { repaired: 0, dropped: 0, structural: 0 }, alien: true };
     }
 
     /* Unknown top-level fields first into the object, so the known ones below
@@ -518,7 +518,13 @@
           else report.dropped += 1;
         });
       } else if (raw !== undefined) {
+        /* The collection is there but is not a list — an id-keyed map, a string,
+           something a hand-edited backup or another tool wrote. Every record in
+           it is unreadable, so this counts as loss, not as a repair: the caller
+           must copy the bytes aside and say so, rather than overwrite them with
+           an empty list and call the file mended. */
         report.repaired += 1;
+        report.structural += 1;
       }
       out[spec.name] = list;
     });
@@ -731,6 +737,61 @@
        covers the Safari case where beforeunload does not fire. */
     global.addEventListener("beforeunload", flushPending);
     global.addEventListener("pagehide", flushPending);
+    global.addEventListener("storage", adoptForeignWrite);
+  }
+
+  /* Two tabs of Moon are ordinary — the panel in one, the ledger in another —
+     and each holds its own copy of the document. Without this, whichever tab
+     saves last overwrites the other tab's entries with a state that never had
+     them, and the backup key gets overwritten on the next save too, so there is
+     nowhere left to recover them from. The `storage` event only fires in the
+     *other* tabs, so adopting the written document here cannot loop: this tab
+     drops its stale copy, takes what is on disk, and redraws. Anything it had
+     typed but not yet saved is flushed first, so the merge direction is "both
+     writes land", not "newest tab wins". */
+  function adoptForeignWrite(event) {
+    if (!event || event.key !== KEY || !state) return;
+    if (event.newValue === null || event.newValue === undefined) return;
+
+    var adopted;
+    try {
+      adopted = normalize(JSON.parse(event.newValue), activeLang());
+    } catch (error) {
+      /* The other tab wrote something unreadable: keep what is in memory here
+         rather than throwing this tab's good copy away. */
+      return;
+    }
+    if (!adopted || !adopted.state) return;
+
+    var mine = state;
+    var next = adopted.state;
+    var rescued = 0;
+
+    /* Records are id-keyed, so the two documents can be unioned: take what the
+       other tab wrote and put back anything only this tab has. A record one tab
+       deleted while the other still held it comes back — losing a deletion is
+       cheaper than losing an entry, and the reader can delete it again. */
+    COLLECTIONS.forEach(function (spec) {
+      var seen = {};
+      if (!Array.isArray(next[spec.name])) next[spec.name] = [];
+      next[spec.name].forEach(function (record) {
+        if (record && record.id) seen[record.id] = true;
+      });
+      (Array.isArray(mine[spec.name]) ? mine[spec.name] : []).forEach(function (record) {
+        if (!record || !record.id || seen[record.id]) return;
+        next[spec.name].push(record);
+        rescued += 1;
+      });
+    });
+
+    /* A write queued here was built on the copy we just replaced; letting it
+       land would undo the other tab. The union below takes its place. */
+    cancelIdle();
+    writeSoon.cancel();
+
+    state = next;
+    emit("state:change", { reason: "storage:foreign" });
+    if (rescued > 0) persist(true);
   }
 
   /* ------------------------------------------------------------------ boot */
@@ -848,7 +909,7 @@
       return { reason: "backup", repaired: report.repaired, dropped: report.dropped };
     }
 
-    if (report.dropped > 0) {
+    if (report.dropped > 0 || report.structural > 0) {
       /* Records we could not read are copied aside before the repaired state
          overwrites them, so "repair" can never mean "quietly lost". */
       if (!quarantine(rawText)) status.readOnly = true;
@@ -1055,14 +1116,33 @@
       return record;
     }
 
+    /* A limit is identified by its category, not by its id: two installations
+       describe the same budget with two different ids. Letting both in gives one
+       category two limit rows, and the two readers of that list disagree —
+       periodSummary adds them up (so the daily allowance hands out money twice)
+       while budgetRows shows one of them. The reader's own limit wins; the
+       incoming duplicate is skipped and counted. */
+    var limitedCategories = {};
+    (state && Array.isArray(state.limits) ? state.limits : []).forEach(function (limit) {
+      if (limit && limit.categoryId) limitedCategories[limit.categoryId] = true;
+    });
+
     ["entries", "limits", "recurring", "goals", "debts"].forEach(function (name) {
       incoming[name].forEach(function (record) {
         if (existingIds[name][record.id]) {
           counts.skipped += 1;
           return;
         }
+        var ready = withRemap(record);
+        if (name === "limits") {
+          if (!ready.categoryId || limitedCategories[ready.categoryId]) {
+            counts.skipped += 1;
+            return;
+          }
+          limitedCategories[ready.categoryId] = true;
+        }
         existingIds[name][record.id] = true;
-        additions[name].push(withRemap(record));
+        additions[name].push(ready);
       });
     });
 

@@ -133,18 +133,38 @@
   --focus: #ffc978;
 }
 
-/* Readers who ask for more contrast get stronger rules and dimmer ink. */
+/* Readers who ask for more contrast get stronger rules and brighter dim ink.
+   The light values must stay scoped to a light surface: `:not([data-theme="dial"])`
+   alone also matches the default dark page, and being more specific than `:root`
+   it would paint light-surface ink onto the dark ground — handing the reader who
+   asked for more contrast the worst contrast on the page. */
 @media (prefers-contrast: more) {
   :root {
     --rule: #3c4c57;
     --rule-strong: #566a76;
     --ink-dim: #aab8c2;
   }
-  :root[data-theme="paper"],
+}
+
+@media (prefers-contrast: more) and (prefers-color-scheme: light) {
   :root:not([data-theme="dial"]) {
     --rule: #9aa7b0;
     --rule-strong: #6f7f8a;
     --ink-dim: #41505a;
+  }
+}
+
+@media (prefers-contrast: more) {
+  :root[data-theme="paper"] {
+    --rule: #9aa7b0;
+    --rule-strong: #6f7f8a;
+    --ink-dim: #41505a;
+  }
+
+  :root[data-theme="dial"] {
+    --rule: #3c4c57;
+    --rule-strong: #566a76;
+    --ink-dim: #aab8c2;
   }
 }
 
