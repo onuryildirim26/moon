@@ -14,8 +14,26 @@ no dependencies — one HTML file and a handful of plain JavaScript files.
 
 <picture>
   <source media="(prefers-color-scheme: light)" srcset="assets/onizleme-light.png">
-  <img src="assets/onizleme.png" alt="Moon's panel on day 17 of 30: ₺350.67 of daily allowance left, the allowance trail against the pace line, and what is left for the rest of the month">
+  <img src="assets/onizleme.png" alt="Moon's panel: net worth across accounts, holdings and debts, the account balances beneath it, and the month's spending against its pace line">
 </picture>
+
+### Writing an expense takes five taps
+
+<img src="assets/onizleme-giris.png" alt="The quick entry sheet: Expense, Income and Move across the top, today's date, the amount ₺48.50 in large numerals, a keypad with plus, minus and equals, and a grid of coloured category icons" width="320" align="right">
+
+Tap **+**, type the amount on Moon's own keypad, tap a category — and that tap is
+the save. No form, no dialog, no confirmation afterwards; if it was a mistake, the
+undo strip is right there.
+
+The keypad is Moon's rather than the phone's for two reasons. A Turkish reader
+writes `1.234,56` and the OS keyboard will not reliably offer that comma. And
+owning the keys is what lets `+` and `−` exist, so a bill can be split without
+leaving the screen.
+
+The direction comes from the category you tap: Salary is income because that
+category is income. There is no expense/income switch to get wrong.
+
+<br clear="all">
 
 ---
 
@@ -49,6 +67,14 @@ in the period. Fixed costs like rent are pulled out of that pool so one big paym
   price you last typed, with gain in money and per cent, a value trail and a share-by-kind
   bar. Prices are typed in, never fetched: no API means no key and no account.
 - **Net worth** — cash plus holdings plus what you are owed, less what you owe.
+- **Move money between your own accounts** — and a transfer is *not* spending.
+  It lives in its own collection, so nothing that reads the ledger can mistake
+  moving five thousand into savings for five thousand of spending.
+- **Two currencies at once** — earn in lira and dollars and see one total. Every
+  record remembers what it was written in, so changing what the app reports in
+  converts the figures instead of relabelling them. Rates are typed in, never
+  fetched; a figure with no rate is left out and said out loud rather than
+  guessed at.
 - **Recurring payments** — rent, bills, subscriptions. Marked as fixed so they stay out of
   the daily allowance and are reported separately.
 - **Savings goals** — how much, by when, and what that means per month.
@@ -129,6 +155,7 @@ js/importer.js      column roles, duplicates, review
 js/charts.js        hand-written SVG charts, the limit bar and the moon phase
 js/ui.js            fields, quick rows, inline values, pickers, undo strip
 js/sample.js        the sample month, its accounts and its holdings
+js/quickadd.js      the five-tap sheet: keypad, categories, transfers
 js/views.*.js       one file per section
 js/app.js           boot, hash router, theme, period, worker registration
 sw.js               the offline shell

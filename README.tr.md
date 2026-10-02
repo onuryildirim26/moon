@@ -14,8 +14,26 @@ bağımlılık yok — bir HTML dosyası ve birkaç düz JavaScript dosyası.
 
 <picture>
   <source media="(prefers-color-scheme: light)" srcset="assets/onizleme-tr-light.png">
-  <img src="assets/onizleme-tr.png" alt="Moon paneli, 30 günün 17'si: kalan günlük pay 350,67 ₺, hız çizgisine karşı pay izi ve ayın geri kalanı için kalan tutar">
+  <img src="assets/onizleme-tr.png" alt="Moon paneli: hesaplar, yatırımlar ve borçlar üzerinden toplam varlık, altında hesap bakiyeleri ve ayın harcaması hız çizgisine karşı">
 </picture>
+
+### Harcama yazmak beş dokunuş
+
+<img src="assets/onizleme-giris.png" alt="Hızlı giriş ekranı: üstte Gider, Gelir ve Aktar, bugünün tarihi, büyük rakamlarla 48,50 ₺, artı eksi ve eşittir tuşlu klavye ve renkli kategori simgeleri" width="320" align="right">
+
+**+**'ya bas, tutarı Moon'un kendi tuş takımında yaz, kategoriye dokun — ve o
+dokunuş kaydetmenin kendisi. Form yok, pencere yok, sonrasında onay yok;
+yanlışlıkla olduysa geri alma şeridi hemen orada.
+
+Tuş takımı telefonunkinin yerine Moon'un kendisi, iki sebeple. Sen `1.234,56`
+yazarsın ve işletim sisteminin klavyesi o virgülü güvenilir biçimde vermez. Bir
+de tuşlar bizim olunca `+` ve `−` var olabiliyor, yani hesabı ekrandan
+çıkmadan bölebiliyorsun.
+
+Yön dokunduğun kategoriden geliyor: Maaş gelirdir çünkü o kategori gelirdir.
+Yanlış seçebileceğin bir gider/gelir düğmesi yok.
+
+<br clear="all">
 
 ---
 
@@ -51,6 +69,14 @@ felaket gibi göstermez.
   yazdığın fiyat; kazancı hem para hem yüzde olarak, değer izi ve türe göre pay çubuğuyla.
   Fiyatlar elle girilir, hiçbir yerden çekilmez: API yoksa anahtar da hesap da yok.
 - **Toplam varlık** — nakit, yatırımlar ve alacağın toplamından borcun düşülmüş hâli.
+- **Hesaplar arası para aktarma** — ve aktarma *harcama değildir*. Kendi
+  koleksiyonunda durur, böylece defteri okuyan hiçbir şey birikime beş bin
+  atmayı beş bin harcama sanamaz.
+- **Aynı anda iki para birimi** — hem lira hem dolar kazan, tek toplam gör. Her
+  kayıt hangi para biriminde yazıldığını hatırlar, yani uygulamanın para
+  birimini değiştirmek rakamları etiketlemez, çevirir. Kurları sen yazarsın,
+  hiçbir yerden çekilmez; kuru olmayan bir tutar tahmin edilmez, toplamın
+  dışında bırakılır ve bu açıkça söylenir.
 - **Tekrarlayan ödemeler** — kira, faturalar, abonelikler. Sabit olarak işaretlenir, günlük
   payın dışında tutulur ve ayrı raporlanır.
 - **Tasarruf hedefleri** — ne kadar, ne zamana, ayda kaça denk geliyor.

@@ -1,7 +1,7 @@
 {
   "name": "Moon — budget ledger",
   "short_name": "Moon",
-  "description": "Track spending, limits, savings, debts and investments. Everything stays in your browser.",
+  "description": "Write an expense in five taps. Limits, savings, debts, accounts, investments and your net worth — all of it stays in your browser.",
   "id": "/moon/",
   "start_url": "./",
   "scope": "./",
@@ -20,7 +20,7 @@
     { "src": "assets/moon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
   ],
   "shortcuts": [
-    { "name": "Write an entry", "short_name": "Write", "url": "./#panel" },
+    { "name": "Write an expense", "short_name": "Write", "url": "./#panel" },
     { "name": "Investments", "short_name": "Investments", "url": "./#yatirim" },
     { "name": "Ledger", "short_name": "Ledger", "url": "./#defter" }
   ]
