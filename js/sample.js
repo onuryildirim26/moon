@@ -372,6 +372,16 @@
      point on the trail, and a hero reporting eleven thousand lira spent today.
      A month that is one third gone should show one third of the month, at the
      density it was authored with, so the dates stay where they were written. */
+  /* What the sample month is written in: whatever the reader is reporting in
+     when they switch it on, because that is the money they are being shown. */
+  function displayCurrency() {
+    try {
+      var code = Moon.Store.state.settings.currency;
+      if (typeof code === "string" && /^[A-Za-z]{3}$/.test(code)) return code.toUpperCase();
+    } catch (error) { /* not booted: the store's own default stands */ }
+    return "TRY";
+  }
+
   function pickDate(days, spec) {
     if (!days.length) return null;
     var wanted = spec.day === undefined ? 0 : spec.day;
@@ -526,6 +536,7 @@
         id: "l" + MARK + key,
         categoryId: catId(key),
         amount: LIMITS[key],
+        currency: displayCurrency(),
         source: "sample"
       });
     });
@@ -541,6 +552,11 @@
         direction: spec.direction === "in" ? "in" : "out",
         categoryId: catId(spec.cat),
         accountId: spec.acc ? accId(spec.acc) : null,
+        /* Stamped like any other record. These are written straight into the
+           store rather than through Model.addEntry, so nothing else would do
+           it, and an unstamped figure is one that can only be relabelled on a
+           change of display currency, never converted. */
+        currency: displayCurrency(),
         note: spec[code],
         fixed: !!fixedByKey[spec.cat],
         source: "sample",
@@ -583,6 +599,7 @@
         id: "g" + MARK + spec.key,
         name: spec[code],
         targetAmount: spec.targetAmount,
+        currency: displayCurrency(),
         savedAmount: saved,
         dueDate: periodStart(periodKey, spec.dueIn),
         contributions: contributions,
@@ -595,6 +612,7 @@
         id: "d" + MARK + spec.key,
         person: spec[code],
         amount: spec.amount,
+        currency: displayCurrency(),
         direction: spec.direction,
         date: pickDate(days, { day: spec.day }) || days[0],
         dueDate: periodStart(periodKey, spec.dueIn),

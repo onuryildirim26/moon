@@ -329,7 +329,7 @@
     };
 
     rows.forEach(function (e) {
-      var amount = positiveInt(e.amount);
+      var amount = amountOf(e);
       if (!amount) return;
       if (direction(e) === "in") {
         out.income += amount;
@@ -346,7 +346,7 @@
 
     list("limits").forEach(function (limit) {
       if (!limit) return;
-      var amount = positiveInt(limit.amount);
+      var amount = amountOf(limit);
       if (!amount) return;
       var cat = cats[limit.categoryId];
       if (!cat || cat.archived) return;
@@ -398,7 +398,7 @@
       list("entries").forEach(function (e) {
         if (!e || e.date !== today || direction(e) === "in") return;
         if (isFixed(e, cats)) return;
-        result.spentToday += positiveInt(e.amount);
+        result.spentToday += amountOf(e);
       });
     }
 
@@ -456,7 +456,7 @@
       if (!e || !isDate(e.date) || direction(e) === "in") return;
       if (e.date < range.start || e.date > last) return;
       if (isFixed(e, cats)) return;
-      perDaySpend[e.date] = (perDaySpend[e.date] || 0) + positiveInt(e.amount);
+      perDaySpend[e.date] = (perDaySpend[e.date] || 0) + amountOf(e);
     });
 
     var spent = 0;
@@ -485,8 +485,8 @@
         bucket = { inAmount: 0, outAmount: 0 };
         byDate[e.date] = bucket;
       }
-      if (direction(e) === "in") bucket.inAmount += positiveInt(e.amount);
-      else bucket.outAmount += positiveInt(e.amount);
+      if (direction(e) === "in") bucket.inAmount += amountOf(e);
+      else bucket.outAmount += amountOf(e);
     });
 
     var days = d.eachDay(range.start, range.end) || [];
@@ -514,7 +514,7 @@
     list("entries").forEach(function (e) {
       if (!e || !isDate(e.date) || direction(e) === "in") return;
       if (e.date < range.start || e.date > last) return;
-      byDate[e.date] = (byDate[e.date] || 0) + positiveInt(e.amount);
+      byDate[e.date] = (byDate[e.date] || 0) + amountOf(e);
       any = true;
     });
     if (!any) return [];
@@ -573,13 +573,13 @@
     entries({ period: periodKey }).forEach(function (e) {
       if (direction(e) === "in") return;
       var id = e.categoryId || "";
-      spentBy[id] = (spentBy[id] || 0) + positiveInt(e.amount);
+      spentBy[id] = (spentBy[id] || 0) + amountOf(e);
     });
 
     var limits = Object.create(null);
     list("limits").forEach(function (limit) {
       if (!limit || !limit.categoryId) return;
-      var amount = positiveInt(limit.amount);
+      var amount = amountOf(limit);
       if (amount > 0) limits[limit.categoryId] = amount;
     });
 
@@ -672,7 +672,7 @@
         for (var j = 0; j < ranges.length; j += 1) {
           var range = ranges[j];
           if (range && e.date >= range.start && e.date <= range.end) {
-            cells[j].amount += positiveInt(e.amount);
+            cells[j].amount += amountOf(e);
             touched = true;
             break;
           }
@@ -756,7 +756,7 @@
       if (direction(e) === "in") return;
       var cat = cats[e.categoryId];
       if (!cat || cat.kind === "income" || cat.archived) return;
-      var amount = positiveInt(e.amount);
+      var amount = amountOf(e);
       if (!amount) return;
       var perPeriod = byCategory[cat.id];
       if (!perPeriod) {
@@ -916,7 +916,7 @@
     list("entries").forEach(function (e) {
       if (!e || !e.id || !isDate(e.date)) return;
       if (e.date < from || e.date > to) return;
-      var amount = positiveInt(e.amount);
+      var amount = amountOf(e);
       if (!amount) return;
       /* A rule has to hang from a category that exists, and a record with no
          note has no stable identity — grouping those together would propose
@@ -1075,7 +1075,7 @@
     var out = { owedToMe: 0, iOwe: 0, net: 0, openCount: 0 };
     list("debts").forEach(function (debt) {
       if (!debt || debt.settled) return;
-      var amount = positiveInt(debt.amount);
+      var amount = amountOf(debt);
       if (!amount) return;
       out.openCount += 1;
       if (debt.direction === "iOwe") out.iOwe += amount;
@@ -1195,6 +1195,32 @@
     return Money.convert(int(minor), code, want, liveRates());
   }
 
+  /* A record's amount, brought into the currency everything is reported in.
+
+     This is the one place the conversion happens for the ledger, so every
+     total, chart and limit reads the same number. A record carries what it was
+     written in; an entry that belongs to an account takes the account's, which
+     is how someone earning in two currencies is handled without being asked
+     anything — the dollar salary goes into the dollar account and is a dollar
+     salary.
+
+     Zero when there is no rate yet, never the raw figure: printing a dollar
+     amount as though it were lira is the error this whole change exists to
+     stop. Moon.Model.rates().missing is what the screen uses to say so. */
+  function amountOf(record) {
+    var minor = positiveInt(record && record.amount);
+    if (!minor) return 0;
+
+    var code = record && record.currency;
+    if (!code && record && record.accountId) {
+      var account = accountById(record.accountId);
+      if (account) code = account.currency;
+    }
+
+    var here = intoDisplay(minor, code);
+    return here === null ? 0 : here;
+  }
+
   /* Every currency the reader actually keeps money in, other than the one the
      app reports in. Empty for almost everybody, which is the point: the rate
      question is only ever asked of someone who has a reason to answer it. */
@@ -1207,6 +1233,11 @@
     }
     accounts().forEach(function (one) { note(one.currency); });
     investments().forEach(function (one) { note(one.currency); });
+    /* The ledger as well: a reader whose only foreign money is a dollar salary
+       still needs to be asked for a rate, and asked before the figure is
+       quietly left out of their month. */
+    list("entries").forEach(function (one) { note(one.currency); });
+    list("limits").forEach(function (one) { note(one.currency); });
     return seen;
   }
 
@@ -1370,9 +1401,13 @@
      into a pause the reader can see. */
   function accountMovements() {
     var out = Object.create(null);
+    /* Raw, not converted: a balance is kept in the account's OWN currency and
+       accountTotals converts the finished balance once. Converting each entry
+       on the way in would report a dollar account in lira and then convert that
+       again. */
     list("entries").forEach(function (e) {
       if (!e || !e.accountId || !isDate(e.date)) return;
-      var amount = positiveInt(e.amount);
+      var amount = amountOf(e);
       if (!amount) return;
       var running = out[e.accountId] || 0;
       out[e.accountId] = direction(e) === "in" ? running + amount : running - amount;
@@ -1442,7 +1477,7 @@
     if (!id || !key) return flow;
     entries({ period: key }).forEach(function (e) {
       if (!e || e.accountId !== id) return;
-      var amount = positiveInt(e.amount);
+      var amount = amountOf(e);
       if (!amount) return;
       flow.count += 1;
       if (direction(e) === "in") flow.in += amount;
@@ -1832,6 +1867,16 @@
     return new Date().toISOString();
   }
 
+  /* What a new record is written in: what the draft says, else the account it
+     goes into, else whatever the app is reporting in today. */
+  function entryCurrency(draft) {
+    var named = text(draft && draft.currency).trim();
+    if (/^[A-Za-z]{3}$/.test(named)) return named.toUpperCase();
+    var account = accountById(accountRef(draft && draft.accountId));
+    if (account) return currencyOf(account.currency);
+    return displayCurrency();
+  }
+
   function normalizeEntry(draft) {
     var cat = categoryById(draft.categoryId);
     var fixed = typeof draft.fixed === "boolean" ? draft.fixed : !!(cat && cat.fixed);
@@ -1845,6 +1890,13 @@
          about one is written with null rather than refused, and the record
          counts in every total it counted in before accounts existed. */
       accountId: accountRef(draft.accountId),
+      /* Stamped at the moment of writing, because this is the only moment the
+         answer is knowable. A record that does not say what it was written in
+         can only be relabelled later, never converted — which is how 1.000,00 ₺
+         used to become 1.000,00 $ on a change of display currency. An entry
+         that belongs to an account takes the account's: a dollar salary paid
+         into a dollar account is a dollar salary. */
+      currency: entryCurrency(draft),
       note: text(draft.note).slice(0, 200),
       fixed: fixed,
       source: text(draft.source) || "manual",
@@ -1891,7 +1943,7 @@
     return record;
   }
 
-  var ENTRY_FIELDS = ["date", "amount", "direction", "categoryId", "accountId", "note",
+  var ENTRY_FIELDS = ["date", "amount", "direction", "categoryId", "accountId", "currency", "note",
     "fixed", "source", "confirmed", "recurringId"];
 
   function updateEntry(id, patch) {
@@ -2265,11 +2317,17 @@
           return null;
         }
         limits[i].amount = amount;
+        /* Re-stamped, because a limit typed today is typed in today's currency
+           whatever the old one said. */
+        limits[i].currency = displayCurrency();
         claim(limits[i]);
         return limits[i].id;
       }
       if (amount === null || amount === 0) return null;
-      var record = { id: util.id("l"), categoryId: categoryId, amount: amount };
+      var record = {
+        id: util.id("l"), categoryId: categoryId, amount: amount,
+        currency: displayCurrency()
+      };
       limits.push(record);
       return record.id;
     });
@@ -2567,6 +2625,7 @@
     }
     var record = {
       id: util.id("g"),
+      currency: displayCurrency(),
       name: text(d.name).trim().slice(0, 200),
       targetAmount: positiveInt(d.targetAmount),
       savedAmount: saved,
@@ -2637,6 +2696,7 @@
     var d = draft;
     var record = {
       id: util.id("d"),
+      currency: displayCurrency(),
       person: text(d.person).trim().slice(0, 200),
       amount: positiveInt(d.amount),
       direction: d.direction === "iOwe" ? "iOwe" : "owedToMe",

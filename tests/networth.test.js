@@ -330,3 +330,70 @@ test("a transfer survives being written to disk and read back", () => {
   assert.equal(reopened.Model.accountBalance(from), 1500000);
   assert.equal(reopened.Model.accountBalance(to), 500000);
 });
+
+/* Earning in two currencies at once, and switching what the app reports in.
+ *
+ * The bug this pins: a record used to hold a bare number, so changing the
+ * display currency printed the same figure with a different symbol. 1.000,00 ₺
+ * became 1.000,00 $ — not a conversion, a relabel, and the kind of wrong that
+ * looks completely normal. A record now says what it was written in. */
+test("changing the display currency converts the figures, it does not relabel them", () => {
+  const Moon = session();
+  const spend = Moon.Model.categories().filter((c) => c.kind === "expense")[0];
+  const earn = Moon.Model.categories().filter((c) => c.kind === "income")[0];
+
+  /* A thousand lira of spending, and a two thousand dollar salary paid into a
+     dollar account — which is how someone earning in both is handled without
+     being asked a single extra question. */
+  Moon.Model.addEntry({
+    date: "2026-09-21", amount: 100000, direction: "out", categoryId: spend.id
+  });
+  const usd = Moon.Model.addAccount({ name: "Dollars", kind: "bank", opening: 0, currency: "USD" });
+  Moon.Model.addEntry({
+    date: "2026-09-21", amount: 200000, direction: "in", categoryId: earn.id, accountId: usd
+  });
+
+  const period = Moon.Dates.periodKey("2026-09-21", 1);
+
+  /* No rate yet: the dollars are left out and said out loud, rather than being
+     added to the lira as though a dollar were a lira. */
+  assert.equal(Moon.Model.periodSummary(period).income, 0);
+  assert.deepEqual(Array.from(Moon.Model.rates().missing), ["USD"]);
+
+  Moon.Model.setRate("USD", 4150);
+  const inLira = Moon.Model.periodSummary(period);
+  assert.equal(inLira.spentTotal, 100000, "the lira spending is itself");
+  assert.equal(inLira.income, 8300000,
+    "and the salary arrives at the rate that was typed: 2000 USD x 41,50");
+
+  /* Now report in dollars instead. 1 TRY = 0,02 USD. */
+  Moon.Store.update((draft) => { draft.settings.currency = "USD"; }, { immediate: true });
+  Moon.Model.setRate("TRY", 2);
+
+  const inDollars = Moon.Model.periodSummary(period);
+  assert.equal(inDollars.spentTotal, 2000, "the same thousand lira is now twenty dollars");
+  assert.equal(inDollars.income, 200000, "and the salary is the two thousand dollars it always was");
+});
+
+test("a record remembers what it was written in", () => {
+  const Moon = session();
+  const spend = Moon.Model.categories().filter((c) => c.kind === "expense")[0];
+
+  const id = Moon.Model.addEntry({
+    date: "2026-09-21", amount: 5000, direction: "out", categoryId: spend.id
+  });
+  const written = Moon.Model.entries({}).filter((e) => e.id === id)[0];
+  assert.equal(written.currency, "TRY", "stamped at the moment of writing");
+
+  /* An entry that belongs to an account takes the account's currency, because
+     a dollar salary paid into a dollar account is a dollar salary. */
+  const usd = Moon.Model.addAccount({ name: "Dollars", kind: "bank", opening: 0, currency: "USD" });
+  const other = Moon.Model.addEntry({
+    date: "2026-09-21", amount: 5000, direction: "out", categoryId: spend.id, accountId: usd
+  });
+  assert.equal(Moon.Model.entries({}).filter((e) => e.id === other)[0].currency, "USD");
+
+  /* And it survives an edit, or the figure would silently change meaning. */
+  Moon.Model.updateEntry(id, { amount: 7000 });
+  assert.equal(Moon.Model.entries({}).filter((e) => e.id === id)[0].currency, "TRY");
+});

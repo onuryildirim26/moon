@@ -24,7 +24,7 @@
   /* Written only by wipe(), read only by other tabs. See wipe(). */
   var WIPE_KEY = "moon.v1.wiped";
   var CORRUPT_PREFIX = "moon.v1.corrupt.";
-  var SCHEMA_VERSION = 3;
+  var SCHEMA_VERSION = 4;
   var WRITE_DELAY = 250;
   var NOTE_MAX = 200;
   var ACCOUNT_NAME_MAX = 60;
@@ -488,6 +488,9 @@
     out.recurringId = str(record.recurringId);
     out.createdAt = str(record.createdAt) || stamp();
     if (out.amount !== minor || !str(record.id)) report.repaired += 1;
+    /* What this figure was written in. Without it a change of display
+       currency relabels the number instead of converting it. */
+    out.currency = currencyOf(record.currency);
     return out;
   }
 
@@ -500,6 +503,9 @@
     out.id = str(record.id) || newId("l");
     out.categoryId = categoryId;
     out.amount = minor;
+    /* What this figure was written in. Without it a change of display
+       currency relabels the number instead of converting it. */
+    out.currency = currencyOf(record.currency);
     return out;
   }
 
@@ -565,6 +571,9 @@
     }
     out.savedAmount = saved;
     out.dueDate = civil(record.dueDate);
+    /* What this figure was written in. Without it a change of display
+       currency relabels the number instead of converting it. */
+    out.currency = currencyOf(record.currency);
     return out;
   }
 
@@ -582,6 +591,9 @@
     out.settled = record.settled === true;
     out.settledDate = out.settled ? civil(record.settledDate, out.date) : civil(record.settledDate);
     out.note = typeof record.note === "string" ? record.note.slice(0, NOTE_MAX) : "";
+    /* What this figure was written in. Without it a change of display
+       currency relabels the number instead of converting it. */
+    out.currency = currencyOf(record.currency);
     return out;
   }
 
@@ -922,6 +934,31 @@
      bytes can reach a second tab, or a second device over a synced folder, and
      be migrated again there. */
   var MIGRATIONS = {
+    /* v4 stamps the currency onto every money record.
+
+       Before this, a record simply held a number and the app printed it with
+       whatever symbol the settings named, so switching from lira to dollars
+       turned 1.000,00 ₺ into 1.000,00 $ — the same figure wearing a different
+       sign, which is not a conversion, it is a lie. A record that says what it
+       was written in can be converted; one that does not, cannot.
+
+       Every existing record is stamped with the display currency, because that
+       is in fact what it was written in: there was no other. */
+    3: function (data) {
+      var code = "TRY";
+      if (data.settings && typeof data.settings.currency === "string") {
+        code = data.settings.currency.toUpperCase();
+      }
+      ["entries", "limits", "goals", "debts"].forEach(function (name) {
+        if (!Array.isArray(data[name])) return;
+        data[name].forEach(function (row) {
+          if (row && typeof row === "object" && !row.currency) row.currency = code;
+        });
+      });
+      data.schemaVersion = 4;
+      return data;
+    },
+
     /* v3 adds the transfers collection. Nothing else moves: a v2 file is a v3
        file with no transfers in it. The version is raised all the same, because
        an older build that did not know the collection would drop it on the next

@@ -516,6 +516,25 @@
         if (CURRENCIES.indexOf(code) === -1) return;
         if (settings().currency === code) return;
         writeSetting({ currency: code }, "settings:currency");
+
+        /* Everything is reported in the new currency from this moment, and
+           anything written in the old one needs a rate before it can be. Until
+           that rate exists those figures are left out — correctly, because
+           printing a lira amount under a dollar sign is the thing this whole
+           change exists to stop, but a reader who just watched their month drop
+           to zero deserves to be taken straight to the one question that fixes
+           it rather than left to find it. */
+        safe(function () {
+          var Model = Moon.Model;
+          if (!Model || typeof Model.rates !== "function") return;
+          var missing = Model.rates().missing;
+          if (!missing || !missing.length) return;
+          go("panel");
+          global.setTimeout(function () {
+            var field = doc.querySelector(".networth__rates button, .networth__rates input");
+            if (field && typeof field.focus === "function") safe(function () { field.focus(); });
+          }, 120);
+        });
       });
       ctl.currency.push(currencySelect);
       currencyHost.appendChild(currencySelect);
