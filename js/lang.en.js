@@ -368,6 +368,9 @@
 
     /* ------------------------------------------------------- accounts ---- */
 
+    "accounts.move.title": "Money moved between accounts",
+    "accounts.move.line": "{amount} · {from} → {to}",
+    "accounts.move.removed": "The move was taken back.",
     "accounts.title": "Accounts",
     "accounts.name": "Account name",
     /* Repairing a record whose name could not be read, the Store has to write
@@ -676,6 +679,14 @@
     "a11y.plus": "Add",
     "a11y.minus": "Subtract",
     "a11y.equals": "Work it out",
+    "err.sameAccount": "Money cannot move to the account it is already in. Pick where it is going.",
+    "quick.kind.move": "Move",
+    "quick.move.from": "From",
+    "quick.move.to": "To",
+    "quick.move.title": "Move money",
+    "quick.move.saved": "{amount} moved from {from} to {to}.",
+    "quick.move.need": "Moving money needs two accounts. Add another one in Accounts.",
+    "quick.move.hint": "Type the amount, then tap where it is going.",
     "quick.open": "Add an expense",
     "quick.title": "New expense",
     "quick.title.income": "New income",

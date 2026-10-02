@@ -74,8 +74,9 @@ test("a v1 blob gains both collections and arrives at schema version 2", () => {
   const Moon = session();
   const migrated = Moon.Store.MIGRATIONS[1](v1Blob());
 
+  /* MIGRATIONS[1] is one rung, not the ladder: it carries v1 to v2 and stops.
+     Whether later rungs exist is a different question, asked further down. */
   assert.equal(migrated.schemaVersion, 2);
-  assert.equal(Moon.Store.SCHEMA_VERSION, 2);
   assert.ok(Array.isArray(migrated.accounts), "accounts must exist after the step");
   assert.ok(Array.isArray(migrated.investments), "investments must exist after the step");
   assert.deepEqual(plain(migrated.accounts), []);
@@ -170,7 +171,7 @@ test("a stored v1 install migrates when it is booted", () => {
   assert.equal(result.dropped, 0, "a v1 install has nothing in it the v2 reader cannot read");
 
   const state = Moon.Store.state;
-  assert.equal(state.schemaVersion, 2);
+  assert.equal(state.schemaVersion, Moon.Store.SCHEMA_VERSION);
   assert.ok(Array.isArray(state.accounts));
   assert.ok(Array.isArray(state.investments));
   assert.deepEqual(plain(state.unknownTop), { note: "written by a newer Moon" });
@@ -221,12 +222,16 @@ test("a v2 install is not damaged by being read again", () => {
   const Moon = session({ "moon.v1": JSON.stringify(stored) });
   const result = Moon.Store.boot();
 
-  assert.equal(result.reason, "loaded", "a v2 document must not be migrated a second time");
-  assert.equal(result.repaired, 0);
-  assert.equal(result.dropped, 0);
+  /* v2 is no longer the top of the ladder, so opening one is a migration — and
+     the point of this test is that it is a migration which COSTS NOTHING: every
+     record it already held comes back exactly as written. */
+  assert.equal(result.reason, "migrated");
+  assert.equal(result.repaired, 0, "a clean v2 document needs no repair on the way up");
+  assert.equal(result.dropped, 0, "and loses nothing");
+  assert.ok(Array.isArray(Moon.Store.state.transfers), "the new collection arrives empty");
 
   const state = Moon.Store.state;
-  assert.equal(state.schemaVersion, 2);
+  assert.equal(state.schemaVersion, Moon.Store.SCHEMA_VERSION);
   assert.deepEqual(plain(state.categories), stored.categories);
   assert.deepEqual(plain(state.accounts), stored.accounts);
   assert.deepEqual(plain(state.investments), stored.investments);
@@ -249,4 +254,34 @@ test("a collection that is present but is not a list is left alone, not replaced
   assert.equal(after.categories, "not-a-list");
   assert.equal(after.schemaVersion, 2);
   assert.ok(Array.isArray(after.investments), "the collection that was missing is still added");
+});
+
+/* The ladder as a whole, rather than any one rung of it. This is the test that
+   should have been here before: it does not name a version, so the next
+   migration cannot make it fail while it is still describing the truth. */
+test("a document already at the top is read, not migrated", () => {
+  const Moon = session();
+  const top = Moon.Store.SCHEMA_VERSION;
+
+  Moon.Store.boot();
+  const fresh = JSON.parse(JSON.stringify(Moon.Store.state));
+  const again = session({ "moon.v1": JSON.stringify(fresh) });
+  const result = again.Store.boot();
+
+  assert.equal(fresh.schemaVersion, top, "a new install is written at the current version");
+  assert.equal(result.reason, "loaded", "and opening it again is not a migration");
+  assert.equal(again.Store.state.schemaVersion, top);
+});
+
+test("a v1 blob climbs every rung when it is booted, not just the first", () => {
+  const Moon = session({ "moon.v1": JSON.stringify(v1Blob()) });
+  const result = Moon.Store.boot();
+
+  assert.equal(result.reason, "migrated");
+  assert.equal(Moon.Store.state.schemaVersion, Moon.Store.SCHEMA_VERSION,
+    "boot runs the ladder to the top, however many rungs it grows");
+  /* Every collection any rung has ever added is present at the end. */
+  for (const name of ["accounts", "investments", "transfers"]) {
+    assert.ok(Array.isArray(Moon.Store.state[name]), `${name} must exist after the climb`);
+  }
 });

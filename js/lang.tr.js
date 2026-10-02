@@ -377,6 +377,9 @@
 
     /* ------------------------------------------------------- accounts ---- */
 
+    "accounts.move.title": "Hesaplar arası aktarmalar",
+    "accounts.move.line": "{amount} · {from} → {to}",
+    "accounts.move.removed": "Aktarma geri alındı.",
     "accounts.title": "Hesaplar",
     "accounts.name": "Hesap adı",
     /* Adı okunamayan bir kaydı onarırken Store bir ad yazmak zorunda; boş ad
@@ -685,6 +688,14 @@
     "a11y.plus": "Ekle",
     "a11y.minus": "Çıkar",
     "a11y.equals": "Sonucu bul",
+    "err.sameAccount": "Aynı hesaba aktarılmaz. Paranın gideceği hesabı seç.",
+    "quick.kind.move": "Aktar",
+    "quick.move.from": "Nereden",
+    "quick.move.to": "Nereye",
+    "quick.move.title": "Para aktar",
+    "quick.move.saved": "{amount} {from} hesabından {to} hesabına aktarıldı.",
+    "quick.move.need": "Aktarmak için en az iki hesap gerekiyor. Hesaplar bölümünden bir tane daha ekle.",
+    "quick.move.hint": "Tutarı yaz, sonra nereye gideceğine dokun.",
     "quick.open": "Harcama ekle",
     "quick.title": "Yeni harcama",
     "quick.title.income": "Yeni gelir",

@@ -3801,3 +3801,63 @@ input[type="radio"] {
   font-size: var(--t-sm);
   color: var(--ink-dim);
 }
+
+/* Gider | Gelir | Aktar. One segmented control, because without it the
+   category grid mixes income and expense and the tap becomes a guess. */
+.qa__modes {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 4px;
+  padding: 3px;
+  border-radius: 999px;
+  background: var(--surface);
+  border: 1px solid var(--rule);
+}
+
+.qa__mode {
+  min-height: 34px;
+  border: none;
+  border-radius: 999px;
+  background: none;
+  color: var(--ink-dim);
+  font: inherit;
+  font-size: var(--t-sm);
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+}
+
+.qa__mode.is-on {
+  background: var(--accent);
+  color: var(--bg);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .qa__mode { transition: none; }
+}
+
+/* Money moved between two of the reader's own accounts. It appears in no
+   ledger, because it is neither spending nor earning, so this is the only
+   place it is visible at all — which is why it is a plain readable list and
+   not a fold. */
+.moves__title {
+  margin: 0 0 var(--s1);
+  font-size: var(--t-label);
+  font-weight: 600;
+  color: var(--ink-dim);
+}
+
+.moves__list { margin: 0; padding: 0; list-style: none; }
+
+.move {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s1);
+  padding: 8px 0;
+  font-size: var(--t-sm);
+  border-top: 1px solid var(--rule-soft);
+}
+
+.move__when { flex: 0 0 auto; color: var(--ink-faint); }
+.move__what { flex: 1 1 auto; min-width: 0; color: var(--ink-dim); }
+.move__drop { flex: 0 0 auto; }

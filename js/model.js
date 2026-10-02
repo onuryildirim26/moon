@@ -1238,6 +1238,71 @@
     };
   }
 
+  /* ------------------------------------------------------------ transfers */
+
+  function transfers(opts) {
+    var rows = list("transfers").slice();
+    var o = opts || {};
+    if (o.accountId) {
+      rows = rows.filter(function (t) {
+        return t && (t.fromAccountId === o.accountId || t.toAccountId === o.accountId);
+      });
+    }
+    rows.sort(function (a, b) { return byDateAscending(b, a); });
+    return rows;
+  }
+
+  function validateTransfer(draft) {
+    var errors = {};
+    var d = draft || {};
+
+    if (!isDate(d.date)) errors.date = "err.badDate";
+
+    var amount = int(d.amount);
+    if (!amount) errors.amount = "err.required";
+    else if (amount < 0) errors.amount = "err.negativeAmount";
+    else if (amount === 0) errors.amount = "err.zeroAmount";
+
+    var from = text(d.fromAccountId);
+    var to = text(d.toAccountId);
+    if (!from || !accountById(from)) errors.fromAccountId = "err.required";
+    if (!to || !accountById(to)) errors.toAccountId = "err.required";
+    /* Moving money to the account it is already in is not a transfer; it is a
+       mistake, and one worth naming rather than writing a record that does
+       nothing and leaves the reader wondering where their money went. */
+    if (from && to && from === to) errors.toAccountId = "err.sameAccount";
+
+    return result(errors);
+  }
+
+  function addTransfer(draft) {
+    if (!validateTransfer(draft).ok) return null;
+    var d = draft;
+    var record = {
+      id: util.id("t"),
+      date: d.date,
+      amount: positiveInt(d.amount),
+      fromAccountId: d.fromAccountId,
+      toAccountId: d.toAccountId,
+      note: text(d.note).slice(0, 200)
+    };
+    return write("transfer:add", function (draft2) {
+      bucket(draft2, "transfers").push(record);
+      return record.id;
+    });
+  }
+
+  function removeTransfer(id) {
+    if (!id) return null;
+    return write("transfer:remove", function (draft) {
+      var rows = bucket(draft, "transfers");
+      for (var i = 0; i < rows.length; i += 1) {
+        if (rows[i] && rows[i].id === id) return rows.splice(i, 1)[0];
+      }
+      return null;
+    });
+  }
+
   function byDateAscending(a, b) {
     var left = text(a && a.date);
     var right = text(b && b.date);
@@ -1312,6 +1377,20 @@
       var running = out[e.accountId] || 0;
       out[e.accountId] = direction(e) === "in" ? running + amount : running - amount;
     });
+
+    /* A transfer moves a balance without being spending or earning. It reaches
+       the accounts here and nowhere else: periodSummary, dailyAllowance, the
+       limits and every chart read `entries`, so moving five thousand lira into
+       savings can never be counted as five thousand lira of spending. That is
+       the whole reason transfers are their own collection. */
+    list("transfers").forEach(function (t) {
+      if (!t || !isDate(t.date)) return;
+      var amount = positiveInt(t.amount);
+      if (!amount || !t.fromAccountId || !t.toAccountId) return;
+      out[t.fromAccountId] = (out[t.fromAccountId] || 0) - amount;
+      out[t.toAccountId] = (out[t.toAccountId] || 0) + amount;
+    });
+
     return out;
   }
 
@@ -2895,6 +2974,10 @@
     investmentSeries: investmentSeries,
 
     netWorth: netWorth,
+    transfers: transfers,
+    addTransfer: addTransfer,
+    removeTransfer: removeTransfer,
+    validateTransfer: validateTransfer,
     rates: rates,
     setRate: setRate,
     foreignCurrencies: foreignCurrencies,

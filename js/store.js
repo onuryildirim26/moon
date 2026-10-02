@@ -24,7 +24,7 @@
   /* Written only by wipe(), read only by other tabs. See wipe(). */
   var WIPE_KEY = "moon.v1.wiped";
   var CORRUPT_PREFIX = "moon.v1.corrupt.";
-  var SCHEMA_VERSION = 2;
+  var SCHEMA_VERSION = 3;
   var WRITE_DELAY = 250;
   var NOTE_MAX = 200;
   var ACCOUNT_NAME_MAX = 60;
@@ -363,6 +363,7 @@
       recurring: [],
       goals: [],
       debts: [],
+      transfers: [],
       accounts: [],
       investments: []
     };
@@ -588,6 +589,41 @@
      there is nothing in it that can be unreadable enough to justify dropping
      the record: a hand-edited account comes back repaired, with a name the
      reader can recognise and correct. */
+  /* Money moving between two of the reader's own accounts. It is deliberately
+     NOT an entry: an entry is spending or earning, and a transfer is neither.
+     Keeping it in its own collection is what makes that impossible to get
+     wrong -- nothing that reads `entries` can accidentally count a move from
+     the current account into savings as five thousand lira of spending, which
+     would eat a month's budget and look entirely normal doing it. */
+  function fillTransfer(record, lang, report) {
+    if (!isObject(record)) return null;
+    var out = copyRecord(record);
+    out.id = str(record.id) || newId("t");
+
+    var date = civil(record.date);
+    if (date === null) return null;
+    out.date = date;
+
+    var amount = toMinor(record.amount);
+    if (amount === null || amount <= 0) return null;
+    out.amount = amount;
+
+    /* Both ends must be named and must differ. A transfer to itself is not a
+       transfer, and one with a missing end cannot move anything, so neither is
+       repairable into a record that means something. */
+    var from = str(record.fromAccountId);
+    var to = str(record.toAccountId);
+    if (!from || !to || from === to) return null;
+    out.fromAccountId = from;
+    out.toAccountId = to;
+
+    var note = str(record.note);
+    out.note = note === null ? "" : note.slice(0, NOTE_MAX);
+    if (note !== null && out.note !== note) report.repaired += 1;
+
+    return out;
+  }
+
   function fillAccount(record, lang, report) {
     if (!isObject(record)) return null;
     var out = copyRecord(record);
@@ -757,7 +793,8 @@
     { name: "goals", fill: fillGoal },
     { name: "debts", fill: fillDebt },
     { name: "accounts", fill: fillAccount },
-    { name: "investments", fill: fillInvestment }
+    { name: "investments", fill: fillInvestment },
+    { name: "transfers", fill: fillTransfer }
   ];
 
   var TOP_FIELDS = { schemaVersion: 1, createdAt: 1, settings: 1 };
@@ -885,6 +922,16 @@
      bytes can reach a second tab, or a second device over a synced folder, and
      be migrated again there. */
   var MIGRATIONS = {
+    /* v3 adds the transfers collection. Nothing else moves: a v2 file is a v3
+       file with no transfers in it. The version is raised all the same, because
+       an older build that did not know the collection would drop it on the next
+       save, and losing records silently is worse than refusing to open. */
+    2: function (data) {
+      if (!Object.prototype.hasOwnProperty.call(data, "transfers")) data.transfers = [];
+      data.schemaVersion = 3;
+      return data;
+    },
+
     /* v2 adds the two collections the net-worth card sums, and dresses every
        category in the colour and icon the redesigned lists draw. A collection
        that is present but is not a list is left exactly as it is: normalize
@@ -2011,7 +2058,7 @@
       });
 
       /* 8c — the same step through boot, and what it leaves on disk */
-      check("boot: v1 data migrates to v2 and is written back as v2", function () {
+      check("boot: v1 data migrates all the way up and is written back at the top", function () {
         testStorage = makeShim({
           "moon.v1": JSON.stringify({
             schemaVersion: 1, createdAt: "2026-09-01", settings: { lang: "tr" },
@@ -2023,8 +2070,10 @@
         var out = boot();
         assert(out.reason === "migrated", "reason should be migrated, got " + out.reason);
         assert(out.dropped === 0 && out.repaired === 0, "a clean v1 file needs no repair");
-        assert(state.schemaVersion === 2, "the live state must be v2");
-        assert(Array.isArray(state.accounts) && Array.isArray(state.investments), "both collections present");
+        assert(state.schemaVersion === SCHEMA_VERSION,
+          "a migration runs the whole ladder: expected " + SCHEMA_VERSION + ", got " + state.schemaVersion);
+        assert(Array.isArray(state.accounts) && Array.isArray(state.investments), "v2's collections present");
+        assert(Array.isArray(state.transfers), "and v3's");
         assert(state.categories[0].color === CATEGORY_SPECTRUM[0], "the category is dressed");
         assert(state.categories[0].icon === ICON_BY_KIND.expense, "icon as well");
         assert(state.entries[0].accountId === null, "an entry with no account reads as null");
@@ -2032,7 +2081,8 @@
         /* The written file is what an older Moon would find: at version 2 it
            refuses to overwrite it, which is the only thing stopping a v1 copy
            of the app from writing these records back without the new fields. */
-        assert(onDisk.schemaVersion === 2, "v2 is what gets written, got " + onDisk.schemaVersion);
+        assert(onDisk.schemaVersion === SCHEMA_VERSION,
+          "the top of the ladder is what gets written, got " + onDisk.schemaVersion);
         assert(Array.isArray(onDisk.accounts) && Array.isArray(onDisk.investments), "and it carries both lists");
         assert(testStorage.raw["moon.v1.bak"], "a migrating boot snapshots the pre-migration file");
       });

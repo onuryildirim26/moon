@@ -1121,6 +1121,58 @@
 
   /* ---------------------------------------------------------------- render */
 
+  /* What has moved between the reader's own accounts. A transfer changes two
+     balances and appears in no ledger, because it is neither spending nor
+     earning — so without this it would be money that moved with nothing on any
+     screen saying so, and the only honest place to show it is beside the
+     balances it moved. Drawn only when there is something to draw. */
+  function movesBlock() {
+    var Model = model();
+    if (!Model || typeof Model.transfers !== "function") return null;
+
+    var rows = safe(function () { return Model.transfers(); }, []) || [];
+    if (!rows.length) return null;
+
+    var UI = Moon.UI;
+    var lines = rows.slice(0, 12).map(function (move) {
+      var from = safe(function () { return Model.accountById(move.fromAccountId); }, null);
+      var to = safe(function () { return Model.accountById(move.toAccountId); }, null);
+
+      var said = dom.el("span", { "class": "move__what" }, t("accounts.move.line", {
+        amount: money(move.amount),
+        from: from ? from.name : t("common.unclassified"),
+        to: to ? to.name : t("common.unclassified")
+      }));
+
+      var when = dom.el("span", { "class": "move__when" },
+        safe(function () { return Moon.Dates.formatDate(move.date, lang(), "short"); }, move.date));
+
+      var drop = dom.el("button", { "class": "btn is-quiet move__drop", type: "button" },
+        t("common.delete"));
+      drop.addEventListener("click", function () {
+        var removed = safe(function () { return Model.removeTransfer(move.id); }, null);
+        if (!removed) return;
+        if (UI && typeof UI.undoStrip === "function") {
+          safe(function () {
+            UI.undoStrip({
+              message: t("accounts.move.removed"),
+              onUndo: function () {
+                safe(function () { Model.addTransfer(removed); });
+              }
+            });
+          });
+        }
+      }, false);
+
+      return dom.el("li", { "class": "move" }, [when, said, drop]);
+    });
+
+    return dom.el("div", { "class": "moves" }, [
+      dom.el("h3", { "class": "moves__title" }, t("accounts.move.title")),
+      dom.el("ul", { "class": "moves__list" }, lines)
+    ]);
+  }
+
   function render(root) {
     if (!root || !dom) return;
     mounted = root;
@@ -1155,6 +1207,8 @@
     if (!all.length) body.push(emptyBlock(add));
     if (live.length) body.push(grid(live, false));
     if (put.length) body.push(archivedFold(put));
+    var moves = movesBlock();
+    if (moves) body.push(moves);
     if (add) body.push(add.element);
 
     root.appendChild(UI.section({

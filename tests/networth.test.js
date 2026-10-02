@@ -246,3 +246,87 @@ test("a holding priced in another currency follows the same rule", () => {
   /* One unit at 120,00 USD, at 40,00 ₺ to the dollar. */
   assert.equal(totals.value, Math.round(12000 * 4000 / 100));
 });
+
+/* Moving money between two of your own accounts.
+ *
+ * The whole reason a transfer is its own collection rather than a pair of
+ * entries: nothing that reads `entries` can mistake it for spending. Moving
+ * five thousand lira into savings must not eat a month's budget, and it would
+ * have looked entirely normal doing it. */
+test("a transfer moves a balance without being spending or earning", () => {
+  const Moon = session();
+  const from = Moon.Model.addAccount({ name: "Current", kind: "bank", opening: 2000000 });
+  const to = Moon.Model.addAccount({ name: "Savings", kind: "savings", opening: 0 });
+
+  const before = {
+    worth: Moon.Model.netWorth().total,
+    spend: Moon.Model.periodSummary(Moon.Dates.periodKey("2026-09-21", 1)).spentTotal
+  };
+
+  const id = Moon.Model.addTransfer({
+    date: "2026-09-21", amount: 500000, fromAccountId: from, toAccountId: to
+  });
+  assert.ok(id, "the transfer is written");
+
+  assert.equal(Moon.Model.accountBalance(from), 1500000, "it left one account");
+  assert.equal(Moon.Model.accountBalance(to), 500000, "and arrived in the other");
+
+  const after = {
+    worth: Moon.Model.netWorth().total,
+    spend: Moon.Model.periodSummary(Moon.Dates.periodKey("2026-09-21", 1)).spentTotal
+  };
+  assert.equal(after.spend, before.spend, "it is not spending");
+  assert.equal(after.worth, before.worth, "and money neither appeared nor vanished");
+
+  Moon.Model.removeTransfer(id);
+  assert.equal(Moon.Model.accountBalance(from), 2000000, "taking it back puts it back");
+  assert.equal(Moon.Model.accountBalance(to), 0);
+});
+
+test("a transfer that cannot mean anything is refused", () => {
+  const Moon = session();
+  const a = Moon.Model.addAccount({ name: "A", kind: "cash", opening: 100000 });
+  const b = Moon.Model.addAccount({ name: "B", kind: "cash", opening: 0 });
+
+  const cases = [
+    [{ date: "2026-09-21", amount: 1000, fromAccountId: a, toAccountId: a }, "to itself"],
+    [{ date: "2026-09-21", amount: 0, fromAccountId: a, toAccountId: b }, "of nothing"],
+    [{ date: "2026-09-21", amount: -500, fromAccountId: a, toAccountId: b }, "of a negative"],
+    [{ date: "not-a-date", amount: 1000, fromAccountId: a, toAccountId: b }, "on no date"],
+    [{ date: "2026-09-21", amount: 1000, fromAccountId: a, toAccountId: "nope" }, "to nowhere"],
+  ];
+  for (const [draft, why] of cases) {
+    assert.equal(Moon.Model.addTransfer(draft), null, `a transfer ${why} is refused`);
+  }
+  assert.equal(Moon.Model.transfers().length, 0);
+});
+
+/* This is the one that was missing. A transfer only meets the store's own
+   validator when it is written to disk and read back, so a mistake in that
+   validator survives every test that only ever builds records in memory —
+   which is exactly how a ReferenceError in it reached a browser. */
+test("a transfer survives being written to disk and read back", () => {
+  const Moon = session();
+  const from = Moon.Model.addAccount({ name: "Current", kind: "bank", opening: 2000000 });
+  const to = Moon.Model.addAccount({ name: "Savings", kind: "savings", opening: 0 });
+  Moon.Model.addTransfer({
+    date: "2026-09-21", amount: 500000, fromAccountId: from, toAccountId: to, note: "aylik birikim"
+  });
+
+  const text = Moon.Store.exportJson();
+  assert.equal(JSON.parse(text).transfers.length, 1, "the export carries the collection");
+
+  /* Imported into a session that has never seen it, which is the path that runs
+     the store's own validator over every record. */
+  const reopened = session();
+  const result = reopened.Store.importJson(text, { mode: "replace" });
+  assert.equal(result.ok, true, String(result.error));
+
+  const rows = reopened.Model.transfers();
+  assert.equal(rows.length, 1, "and the store's own validator keeps it on the way back in");
+  assert.equal(rows[0].amount, 500000);
+  assert.equal(rows[0].date, "2026-09-21");
+  assert.equal(rows[0].note, "aylik birikim");
+  assert.equal(reopened.Model.accountBalance(from), 1500000);
+  assert.equal(reopened.Model.accountBalance(to), 500000);
+});

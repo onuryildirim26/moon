@@ -413,10 +413,19 @@
     var panel = Moon.Views && Moon.Views.panel;
     if (panel && typeof panel.markWrite === "function") safe(function () { panel.markWrite(); });
 
+    finish(t("quick.saved", { amount: money(minor), category: category.name }),
+      function () { safe(function () { Model.removeEntry(id); }); });
+  }
+
+  /* What every write does afterwards, whether it wrote an expense, an income or
+     a move: say what happened, offer to take it back, and either step out of
+     the way or clear down for the next one. Shared so the three paths cannot
+     start behaving differently from each other. */
+  function finish(said, undo) {
     if (keepGoing) {
-      /* The date, the account and the toggle survive; the amount and the note
-         do not, because those are the two things that differ between one
-         receipt and the next. */
+      /* The date, the account, the mode and the toggle survive; the amount and
+         the note do not, because those are the two things that differ between
+         one receipt and the next. */
       state.digits = "";
       state.pending = null;
       state.note = "";
@@ -429,14 +438,7 @@
 
     var UI = Moon.UI;
     if (UI && typeof UI.undoStrip === "function") {
-      safe(function () {
-        UI.undoStrip({
-          message: t("quick.saved", { amount: money(minor), category: category.name }),
-          onUndo: function () {
-            safe(function () { Model.removeEntry(id); });
-          }
-        });
-      });
+      safe(function () { UI.undoStrip({ message: said, onUndo: undo }); });
     }
   }
 
@@ -563,8 +565,140 @@
     return input;
   }
 
+  /* Gider / Gelir / Aktar. The first two filter the category grid, which until
+     now mixed the two together — a reader entering a coffee was shown Salary
+     beside Groceries, and the only thing telling them apart was knowing. The
+     third swaps the grid for the accounts the money could go to.
+
+     This is the one mode switch in the sheet, and it earns its place: without
+     it the grid lies about what it is offering. */
+  var MODES = ["out", "in", "move"];
+
+  function modeRow() {
+    var pills = MODES.map(function (mode) {
+      var pill = dom.el("button", {
+        "class": "qa__mode" + (mode === state.mode ? " is-on" : ""),
+        type: "button",
+        "aria-pressed": mode === state.mode ? "true" : "false"
+      }, t(mode === "move" ? "quick.kind.move" : "quick.kind." + mode));
+      pill.dataset.mode = mode;
+      pill.addEventListener("click", function () {
+        if (state.mode === mode) return;
+        state.mode = mode;
+        repaintMode();
+      }, false);
+      return pill;
+    });
+
+    return dom.el("div", {
+      "class": "qa__modes",
+      role: "group",
+      "aria-label": t("quick.title")
+    }, pills);
+  }
+
+  /* The grid is the only thing a mode change rebuilds; everything above it —
+     the amount already typed, the day, the account — is still true. */
+  function repaintMode() {
+    if (!node || !state) return;
+
+    Array.prototype.slice.call(node.querySelectorAll(".qa__mode")).forEach(function (pill) {
+      var on = pill.dataset && pill.dataset.mode === state.mode;
+      pill.setAttribute("aria-pressed", on ? "true" : "false");
+      if (pill.classList) {
+        if (on) pill.classList.add("is-on");
+        else pill.classList.remove("is-on");
+      }
+    });
+
+    var old = node.querySelector(".qa__grid, .qa__none");
+    if (!old || !old.parentNode) return;
+    var fresh = state.mode === "move" ? moveGrid() : grid();
+    old.parentNode.replaceChild(fresh, old);
+
+    var title = node.querySelector(".qa__title");
+    if (title) title.textContent = t(state.mode === "move" ? "quick.move.title" : "quick.title");
+    var hint = node.querySelector(".qa__hint");
+    if (hint) hint.textContent = t(state.mode === "move" ? "quick.move.hint" : "quick.hint");
+
+    /* The account row stays in every mode. Writing an expense still asks which
+       account paid for it; a move just reads the same row as the end the money
+       is leaving, so only its name changes. */
+    var accs = node.querySelector(".qa__accs");
+    if (accs) {
+      accs.setAttribute("aria-label", t(state.mode === "move" ? "quick.move.from" : "quick.account"));
+    }
+
+    paintAmount();
+  }
+
+  /* Where the money is going. The account it is coming from is the chip row
+     above, which is already there and already remembers the last one used. */
+  function moveGrid() {
+    var Model = Moon.Model;
+    var accounts = safe(function () { return Model.accounts(); }, []) || [];
+    if (accounts.length < 2) {
+      return dom.el("p", { "class": "qa__none prose" }, t("quick.move.need"));
+    }
+
+    var tiles = accounts.filter(function (one) {
+      return one.id !== state.account;
+    }).map(function (account) {
+      var button = dom.el("button", {
+        "class": "qa__tile",
+        type: "button",
+        style: { "--tone": tone(account.color) }
+      }, [
+        dom.el("span", { "class": "qa__tile__icon", "aria-hidden": "true" }, account.icon || "•"),
+        dom.el("span", { "class": "qa__tile__name" }, account.name)
+      ]);
+      button.addEventListener("click", function () { move(account); }, false);
+      return button;
+    });
+
+    return dom.el("div", {
+      "class": "qa__grid is-waiting",
+      role: "group",
+      "aria-label": t("quick.move.to"),
+      "aria-disabled": "true"
+    }, tiles);
+  }
+
+  function move(target) {
+    if (!state) return;
+    var minor = minorOf(state.digits);
+    if (!(minor > 0)) return;
+
+    var Model = Moon.Model;
+    if (!Model || typeof Model.addTransfer !== "function") return;
+
+    var from = safe(function () { return Model.accountById(state.account); }, null);
+    if (!from || from.id === target.id) return;
+
+    var id = safe(function () {
+      return Model.addTransfer({
+        date: state.date,
+        amount: minor,
+        fromAccountId: from.id,
+        toAccountId: target.id,
+        note: state.note || ""
+      });
+    }, null);
+    if (!id) return;
+
+    var panel = Moon.Views && Moon.Views.panel;
+    if (panel && typeof panel.markWrite === "function") safe(function () { panel.markWrite(); });
+
+    var said = t("quick.move.saved", {
+      amount: money(minor), from: from.name, to: target.name
+    });
+    finish(said, function () { safe(function () { Model.removeTransfer(id); }); });
+  }
+
   function grid() {
-    var list = categoriesFor(null);
+    /* Filtered by the mode, so the grid shows what the reader said they were
+       writing. Mixing income and expense in one grid made the tap a guess. */
+    var list = categoriesFor(state.mode === "in" ? "income" : "expense");
     if (!list.length) {
       return dom.el("p", { "class": "qa__none prose" }, t("quick.empty"));
     }
@@ -617,13 +751,14 @@
       "aria-label": t("quick.title")
     }, [
       head,
+      modeRow(),
       dayRow(),
       accountRow(),
       amount,
       noteRow(),
       keypad(),
       dom.el("p", { "class": "qa__hint" }, t("quick.hint")),
-      grid(),
+      state.mode === "move" ? moveGrid() : grid(),
       dom.el("p", { "class": "qa__reading sr", role: "status", "aria-live": "polite" }, "")
     ]);
 
@@ -658,7 +793,8 @@
     var doc = global.document;
     if (!doc || !doc.body) return;
 
-    state = { digits: "", date: today(), note: "", pending: null, account: lastAccount() };
+    state = { digits: "", date: today(), note: "", pending: null,
+      account: lastAccount(), mode: "out" };
     lastFocus = doc.activeElement;
 
     node = safe(build, null);
